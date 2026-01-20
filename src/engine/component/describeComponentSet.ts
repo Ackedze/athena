@@ -27,6 +27,7 @@ export function describeComponentSet(
   let structure: DSComponent['structure'] = [];
   const variantStructures: Record<string, DSVariantStructurePatch[]> = {};
 
+  // Используем first variant как base snapshot, затем храним per-variant patches.
   const firstVariant = set.children.find(
     (child): child is ComponentNode => child.type === "COMPONENT",
   );
@@ -46,6 +47,7 @@ export function describeComponentSet(
       child as ComponentNode,
       collectStructureOptions,
     );
+    // Сохраняем minimal diff от base structure.
     variantStructures[child.key] = buildVariantOverrides(structure, variantStructure);
   }
 

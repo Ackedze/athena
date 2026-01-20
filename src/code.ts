@@ -100,6 +100,7 @@ interface StyleExportPayload {
 
 const blueTintTokensUrl =
   'https://ackedze.github.io/nemesis/JSONS/BlueTint Base Colors -- BlueTint Base Colors.json';
+// Remote token library для resolve VARIABLE_ALIAS значений в реальные цвета.
 let blueTintVariableMap: Map<string, TokenVariableExport> | null = null;
 let blueTintLoadPromise: Promise<void> | null = null;
 
@@ -110,6 +111,7 @@ figma.showUI(__html__, { width: 1280, height: 720 });
 console.log('[CODE] UI shown');
 logDebug('ui-shown', { width: 1280, height: 720 });
 
+// Роутим UI events на export/collect actions.
 figma.ui.onmessage = (msg) => {
   console.log('[CODE] received message from UI:', msg);
   logDebug('ui-message', msg);
@@ -222,6 +224,7 @@ function startPagedExport(
   autoContinue: boolean,
   scope: 'current-page' | 'document',
 ) {
+  // Page-by-page export держит UI responsive на больших файлах.
   sessionCounter += 1;
   pagedSession = {
     id: sessionCounter,
@@ -462,6 +465,7 @@ function collectStylesAndSend() {
 }
 
 async function collectTokensFromFile(): Promise<TokenExportPayload> {
+  // Variables API export с hex map и alias resolution.
   if (!figma.variables) {
     throw new Error('Variables API not доступен в этом файле');
   }
@@ -847,6 +851,7 @@ function extractAliasKey(aliasId?: string): string | null {
 }
 
 async function ensureBlueTintVariablesLoaded(): Promise<void> {
+  // Load remote token catalog один раз для resolve aliases.
   if (blueTintVariableMap) return;
   if (blueTintLoadPromise) {
     return blueTintLoadPromise;
@@ -900,6 +905,7 @@ function normalizePageName(name: string): string {
 }
 
 function sanitizeExportPayload(data: DSExport): DSExport {
+  // Убираем heavy fields и trim nodes перед отправкой в UI.
   const sanitizedComponents = data.components.map((component) => {
     const sanitizedComponent: DSComponent = Object.assign({}, component, {
       structure: component.structure.map(trimStructureNode),

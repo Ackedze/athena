@@ -1,6 +1,7 @@
 import { DSNodeLayout } from "../../types";
 
 export function extractLayout(node: SceneNode): DSNodeLayout | undefined {
+  // Снимаем только auto-layout settings и bound variable tokens.
   const layout: DSNodeLayout = {};
 
   if ("layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE") {

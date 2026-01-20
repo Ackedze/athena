@@ -18,6 +18,7 @@ export function snapshotNode(
   id: number,
   options?: SnapshotOptions,
 ): DSStructureNode {
+  // Делаем snapshot structural и visual properties для export.
   const path = makePath(parentPath, node.name);
 
   const snap: DSStructureNode = {
@@ -52,6 +53,7 @@ export function snapshotNode(
     preserveHiddenFills: options?.preserveHiddenFills ?? true,
   };
 
+  // Resolve paint tokens через bound variables или styles, затем attach paint data.
   const rawFills = "fills" in node ? node.fills : undefined;
   const fillToken =
     extractPaintVariableId(rawFills) ||

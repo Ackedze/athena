@@ -1,6 +1,7 @@
 import { DSTextContent } from "../../types";
 
 export function extractText(node: SceneNode): DSTextContent | undefined {
+  // Пропускаем mixed values, чтобы избежать partial range extraction.
   if (node.type !== "TEXT") return undefined;
 
   const t = node as TextNode;

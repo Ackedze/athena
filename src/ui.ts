@@ -7,6 +7,7 @@ type ExportResultPayload = {
 
 console.log('[UI] script loaded');
 
+// Подключаем UI controls и обрабатываем сообщения от plugin controller.
 const exportBtn = document.getElementById(
   'export-btn',
 ) as HTMLButtonElement | null;

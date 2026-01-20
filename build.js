@@ -4,6 +4,7 @@ const path = require('path');
 const isWatch = process.argv.includes('--watch');
 
 async function buildOnce() {
+  // Bundle plugin code и UI в dist для Figma manifest.
   await esbuild.build({
     entryPoints: {
       code: 'src/code.ts',
@@ -27,6 +28,7 @@ async function buildOnce() {
 
 if (isWatch) {
   (async () => {
+    // Переиспользуем persistent build context для быстрых incremental rebuilds.
     const ctx = await esbuild.context({
       entryPoints: {
         code: 'src/code.ts',

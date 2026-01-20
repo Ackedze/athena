@@ -45,6 +45,7 @@ export interface ComponentClassificationResult {
 export function classifyComponentMeta(
   ctx: ComponentClassificationContext,
 ): ComponentClassificationResult {
+  // Simple heuristics на основе naming conventions; подстройте, когда taxonomy изменится.
   const { componentName, pageName, sectionName, libraryName } = ctx;
   const sources = [componentName ?? '', pageName ?? '', sectionName ?? ''];
   const statusSources = [...sources, libraryName ?? ''];

@@ -5,6 +5,7 @@ interface CollectStructureOptions {
   preserveHiddenFills?: boolean;
 }
 
+// Cache per root node + options, чтобы не пересобирать структуры между variants.
 const structureCache = new Map<string, DSStructureNode[]>();
 
 export function resetStructureCache() {

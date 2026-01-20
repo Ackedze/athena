@@ -145,6 +145,7 @@ function collectComponentsFromPages(pages: PageNode[]): {
 }
 
 export function assignDepthMetrics(components: DSComponent[]) {
+  // Проходим component structures, чтобы определить nesting depth parts внутри mains.
   const componentsByKey = new Map<string, DSComponent>();
   for (const component of components) {
     if (component.key) {
@@ -239,6 +240,7 @@ function collectComponentsFromPageInternal(page: PageNode): {
   errors: string[];
   pageHasComponents: boolean;
 } {
+  // Depth-first traversal: собираем component sets и standalone components.
   const components: DSComponent[] = [];
   const errors: string[] = [];
   let pageHasComponents = false;
@@ -320,6 +322,7 @@ export async function collectComponentsFromPageChunked(
   pageHasComponents: boolean;
   aborted: boolean;
 }> {
+  // Chunked traversal отдаёт управление event loop, чтобы держать Figma responsive.
   const components: DSComponent[] = [];
   const errors: string[] = [];
   let pageHasComponents = false;
