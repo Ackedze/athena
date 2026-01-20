@@ -1,0 +1,1566 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        margin: 16px;
+        color: #111;
+      }
+      h1 {
+        margin: 0 0 12px 0;
+        font-size: 16px;
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .tabs {
+        display: inline-flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid #dcdcdc;
+        padding-bottom: 4px;
+      }
+      .tabs button {
+        border: 1px solid #dcdcdc;
+        border-bottom: none;
+        border-radius: 8px 8px 0 0;
+        margin: 0;
+        background: #fff;
+        font-weight: 600;
+      }
+      .tabs button.active {
+        background: #f7f7f7;
+      }
+      button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #b2b2b2;
+        background: #f3f3f3;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #e9e9e9;
+      }
+      .summary {
+        margin-bottom: 12px;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .summary strong {
+        margin-right: 6px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+        align-items: stretch;
+      }
+      .panel {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fff;
+        min-height: 240px;
+        display: flex;
+        flex-direction: column;
+      }
+      .panel.json-panel {
+        display: none;
+      }
+      .tab-panel {
+        display: none;
+      }
+      .tab-panel.active {
+        display: block;
+      }
+      .tokens-controls {
+        margin-bottom: 12px;
+      }
+      .tokens-summary {
+        margin-bottom: 12px;
+        font-size: 12px;
+      }
+      .tokens-group td {
+        font-weight: 600;
+        background: #f4f5f5;
+      }
+      .panel-title {
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .table-wrapper {
+        overflow: auto;
+        flex: 1;
+        border: 1px solid #eee;
+        border-radius: 6px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th,
+      td {
+        padding: 6px;
+        border-bottom: 1px solid #ececec;
+        text-align: left;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: #fafafa;
+        border-bottom: 1px solid #dcdcdc;
+        z-index: 1;
+      }
+      #output {
+        flex: 1;
+        resize: none;
+        border: 1px solid #eee;
+        border-radius: 6px;
+        padding: 8px;
+        font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono',
+          Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      #normalized-output {
+        flex: 1;
+        resize: none;
+        border: 1px solid #eee;
+        border-radius: 6px;
+        padding: 8px;
+        font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono',
+          Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.4;
+        min-height: 240px;
+      }
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Athena</h1>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="components" type="button">
+          Компоненты
+        </button>
+        <button class="tab" data-tab="tokens" type="button">Токены</button>
+        <button class="tab" data-tab="styles" type="button">Стили</button>
+      </div>
+
+    <section class="tab-panel active" id="components-panel">
+      <div class="controls">
+        <button id="export-page-btn">Собрать компоненты</button>
+        <button id="download-btn">Скачать JSON</button>
+        <button id="continue-btn" style="display: none">Следующая страница</button>
+      </div>
+
+      <div class="summary">
+        <div id="summary-meta">
+          Нажмите «Собрать компоненты», чтобы получить свежие данные
+        </div>
+        <div><strong>Платформы:</strong> <span id="platform-summary">—</span></div>
+        <div><strong>Статусы:</strong> <span id="status-summary">—</span></div>
+        <div><strong>Роли:</strong> <span id="role-summary">—</span></div>
+        <div><strong>Время:</strong> <span id="timer-display">00:00</span></div>
+        <div id="progress-label" style="display: none"></div>
+      </div>
+
+      <div class="layout">
+        <div class="panel">
+          <div class="panel-title">Компоненты</div>
+          <div class="table-wrapper">
+            <table class="component-table">
+              <thead>
+                <tr>
+                  <th>Компонент</th>
+                  <th>Платформа</th>
+                  <th>Роль</th>
+                  <th>Статус</th>
+                  <th>Глубина</th>
+                  <th>Расположение</th>
+                </tr>
+              </thead>
+              <tbody id="component-table-body">
+                <tr>
+                  <td colspan="6">Данных пока нет</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel json-panel">
+          <div class="panel-title">JSON</div>
+          <textarea id="output" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="panel" style="margin-top: 16px">
+        <div class="panel-title">JSON</div>
+        <textarea
+          id="normalized-output"
+          spellcheck="false"
+          placeholder="Нажмите «Собрать компоненты», чтобы получить данные"
+        ></textarea>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tokens-panel">
+      <div class="controls tokens-controls">
+        <button id="collect-tokens-btn" type="button">Собрать токены</button>
+        <button id="download-tokens-btn" type="button">Скачать JSON</button>
+      </div>
+      <div class="summary tokens-summary">
+        <div id="tokens-summary">Соберите токены, чтобы увидеть данные</div>
+      </div>
+      <div class="layout">
+        <div class="panel">
+          <div class="panel-title">Токены</div>
+          <div class="table-wrapper">
+            <table class="tokens-table">
+              <thead>
+                <tr>
+                  <th>Коллекция</th>
+                  <th>Mode</th>
+                  <th>Группа</th>
+                  <th>Название</th>
+                  <th>Значение</th>
+                  <th>Key</th>
+                </tr>
+              </thead>
+              <tbody id="token-table-body">
+                <tr>
+                  <td colspan="6">Данных пока нет</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="styles-panel">
+      <div class="controls styles-controls">
+        <button id="collect-styles-btn" type="button">Собрать стили</button>
+        <button id="download-styles-btn" type="button">Скачать JSON</button>
+      </div>
+      <div class="summary styles-summary">
+        <div id="styles-summary">Соберите стили, чтобы увидеть данные</div>
+      </div>
+      <div class="layout">
+        <div class="panel">
+          <div class="panel-title">Стили</div>
+          <div class="table-wrapper">
+            <table class="styles-table">
+              <thead>
+                <tr>
+                  <th>Тип</th>
+                  <th>Группа</th>
+                  <th>Название</th>
+                  <th>Значение</th>
+                  <th>Key</th>
+                </tr>
+              </thead>
+              <tbody id="styles-table-body">
+                <tr>
+                  <td colspan="5">Данных пока нет</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      (function () {
+        console.log('[UI] inline script loaded');
+
+        var exportPageBtn = document.getElementById('export-page-btn');
+        var output = document.getElementById('output');
+        var downloadBtn = document.getElementById('download-btn');
+        var normalizedOutput = document.getElementById('normalized-output');
+        var collectTokensBtn = document.getElementById('collect-tokens-btn');
+        var downloadTokensBtn = document.getElementById('download-tokens-btn');
+        var collectStylesBtn = document.getElementById('collect-styles-btn');
+        var downloadStylesBtn = document.getElementById('download-styles-btn');
+        var summaryMeta = document.getElementById('summary-meta');
+        var platformSummary = document.getElementById('platform-summary');
+        var statusSummary = document.getElementById('status-summary');
+        var roleSummary = document.getElementById('role-summary');
+        var componentTableBody = document.getElementById('component-table-body');
+        var tokenTableBody = document.getElementById('token-table-body');
+        var stylesTableBody = document.getElementById('styles-table-body');
+        var continueBtn = document.getElementById('continue-btn');
+        var tabs = document.querySelectorAll('[data-tab]');
+        var componentsTab = document.getElementById('components-panel');
+        var tokensTab = document.getElementById('tokens-panel');
+        var stylesTab = document.getElementById('styles-panel');
+        var tokensSummaryLabel = document.getElementById('tokens-summary');
+        var stylesSummaryLabel = document.getElementById('styles-summary');
+        var waitingForContinue = false;
+        var pagedFiles = null;
+        var progressLabel = document.getElementById('progress-label');
+        var timerDisplay = document.getElementById('timer-display');
+        var timerInterval = null;
+        var timerStart = null;
+        var exportMode = 'document'; // 'document' vs 'current-page'
+        var lastTextareaContent = '';
+        var lastDownloadMeta = null;
+        var lastStylesJson = '';
+        var lastStylesMeta = null;
+        var stylesCollected = false;
+        var lastTokensJson = '';
+        var lastTokensMeta = null;
+        var lastExportData = null;
+        var normalizedJson = '';
+        var normalizedApplied = false;
+
+        console.log('[UI] elements:', {
+          exportPageBtn,
+          output,
+          summaryMeta,
+          platformSummary,
+          statusSummary,
+          roleSummary,
+          componentTableBody,
+          continueBtn,
+          progressLabel,
+        });
+
+        bindButton(downloadBtn, function () {
+          triggerDownload();
+        });
+
+        bindButton(downloadTokensBtn, function () {
+          triggerTokenDownload();
+        });
+
+        bindButton(downloadStylesBtn, function () {
+          triggerStyleDownload();
+        });
+
+        bindButton(collectTokensBtn, function () {
+          console.log('[UI] collect tokens button clicked');
+          parent.postMessage(
+            { pluginMessage: { type: 'collect-tokens' } },
+            '*',
+          );
+        });
+
+        bindButton(collectStylesBtn, function () {
+          console.log('[UI] collect styles button clicked');
+          parent.postMessage(
+            { pluginMessage: { type: 'collect-styles' } },
+            '*',
+          );
+        });
+
+        bindButton(exportPageBtn, function () {
+          pagedFiles = [];
+          window.__pagedFiles = pagedFiles;
+          waitingForContinue = false;
+          updateProgressLabel(null);
+          resetPagedOutputs();
+          if (continueBtn) {
+            continueBtn.style.display = 'none';
+            continueBtn.disabled = true;
+          }
+          exportMode = 'current-page';
+          startTimer();
+          console.log('[UI] parse components button clicked');
+          parent.postMessage(
+            { pluginMessage: { type: 'export-components-current-page' } },
+            '*',
+          );
+        });
+
+        bindButton(continueBtn, function () {
+          if (!waitingForContinue) return;
+          startTimer();
+          continueBtn.disabled = true;
+          resetPagedOutputs();
+          parent.postMessage(
+            { pluginMessage: { type: 'export-components-continue' } },
+            '*',
+          );
+        });
+
+        updateTabState('components');
+
+        tabs.forEach(function (tab) {
+          tab.addEventListener('click', function () {
+            var target = tab.getAttribute('data-tab');
+            if (target) {
+              updateTabState(target);
+            }
+          });
+        });
+
+        window.onmessage = function (event) {
+          console.log('[UI] window.onmessage triggered:', event.data);
+          var msg = event.data && event.data.pluginMessage;
+          if (!msg) return;
+
+          if (msg.type === 'export-result') {
+            var payload = msg.payload || {};
+            if (!payload.json || !payload.data) return;
+            stopTimer();
+            renderExportResult(payload);
+            updateContinueState(payload.progress);
+          }
+          if (msg.type === 'collect-tokens-result') {
+            var payload = msg.payload || {};
+            if (!payload.json || !payload.data) return;
+            lastTokensJson = payload.json;
+            lastTokensMeta = payload.data.meta || null;
+            var tokenEntries = buildTokenTableEntries(payload.data);
+            renderTokens(tokenEntries);
+          }
+          if (msg.type === 'collect-styles-result') {
+            var payload = msg.payload || {};
+            if (!payload.json || !payload.data) return;
+            lastStylesJson = payload.json;
+            lastStylesMeta = payload.data.meta || null;
+            var styleEntries = payload.data.styles || [];
+            stylesCollected = true;
+            renderStyles(styleEntries, true);
+          }
+        };
+
+        function updateTabState(target) {
+          tabs.forEach(function (tab) {
+            if (tab.getAttribute('data-tab') === target) {
+              tab.classList.add('active');
+            } else {
+              tab.classList.remove('active');
+            }
+          });
+          if (componentsTab) {
+            componentsTab.classList.toggle('active', target === 'components');
+          }
+          if (tokensTab) {
+            tokensTab.classList.toggle('active', target === 'tokens');
+          }
+          if (stylesTab) {
+            stylesTab.classList.toggle('active', target === 'styles');
+          }
+        }
+
+        function bindButton(button, handler) {
+          if (!button) return;
+          button.onclick = handler;
+        }
+
+        function updateProgressLabel(progress) {
+          if (!progressLabel) return;
+          if (!progress) {
+            progressLabel.style.display = 'none';
+            progressLabel.textContent = '';
+            return;
+          }
+
+          var current = progress.currentPage || '—';
+          var completed = Math.max(0, Math.min(progress.completed, progress.total));
+          progressLabel.textContent =
+            'Проверяем: ' + current + ' (' + completed + ' из ' + progress.total + ')';
+          progressLabel.style.display = 'block';
+        }
+
+        function rememberPagedFile(payload) {
+          if (!payload) return;
+          if (!Array.isArray(pagedFiles)) {
+            pagedFiles = [];
+          }
+          var meta = payload.data && payload.data.meta;
+          var pageName =
+            payload.pageName ||
+            (meta && meta.files && meta.files[0]) ||
+            (payload.progress ? 'page-' + payload.progress.completed : 'page');
+          var componentsCount =
+            payload.data && Array.isArray(payload.data.components)
+              ? payload.data.components.length
+              : 0;
+          pagedFiles.push({
+            name: pageName,
+            json: payload.json,
+            data: payload.data,
+            components:
+              payload.data && payload.data.components
+                ? payload.data.components.slice()
+                : [],
+            meta: payload.data ? payload.data.meta : null,
+          });
+          window.__pagedFiles = pagedFiles;
+          }
+
+        function resetPagedOutputs() {
+          pagedFiles = [];
+          window.__pagedFiles = pagedFiles;
+          if (output) {
+            output.value = '';
+          }
+          if (normalizedOutput) {
+            normalizedOutput.value = '';
+          }
+          normalizedJson = '';
+          normalizedApplied = false;
+          renderSummary(null, []);
+          if (componentTableBody) {
+            componentTableBody.innerHTML =
+              '<tr><td colspan="6">Данных пока нет</td></tr>';
+          }
+          if (tokenTableBody) {
+            tokenTableBody.innerHTML =
+              '<tr><td colspan="4">Данных пока нет</td></tr>';
+          }
+          if (tokensSummaryLabel) {
+            tokensSummaryLabel.textContent =
+              'Соберите токены, чтобы увидеть данные';
+          }
+          lastTokensJson = '';
+          lastTokensMeta = null;
+          if (stylesTableBody) {
+            stylesTableBody.innerHTML =
+              '<tr><td colspan="5">Данных пока нет</td></tr>';
+          }
+          if (stylesSummaryLabel) {
+            stylesSummaryLabel.textContent =
+              'Соберите стили, чтобы увидеть данные';
+          }
+          lastStylesJson = '';
+          lastStylesMeta = null;
+        }
+
+        function renderExportResult(payload) {
+          window.__lastExportPayload = payload;
+          lastExportData = payload && payload.data ? payload.data : null;
+          normalizeCatalogOutput(payload.data || null);
+          if (payload && payload.mode === 'paged') {
+            rememberPagedFile(payload);
+          } else {
+            pagedFiles = null;
+            window.__pagedFiles = pagedFiles;
+            updateProgressLabel(null);
+          }
+          if (output) {
+            if (payload && payload.mode === 'paged') {
+              output.value = payload.json;
+              console.log('[UI] textarea updated with paged JSON');
+            } else {
+              output.value = payload.json;
+              console.log(
+                '[UI] textarea updated, length =',
+                payload.json.length,
+              );
+            }
+            lastTextareaContent = output.value;
+          }
+
+          if (payload && payload.mode === 'paged') {
+            var pageLabel =
+              payload.pageName ||
+              (payload.data &&
+                payload.data.meta &&
+                Array.isArray(payload.data.meta.files) &&
+                payload.data.meta.files[0]) ||
+              'page';
+            var libraryLabel =
+              (payload.data &&
+                payload.data.meta &&
+                payload.data.meta.library) ||
+              (payload.data &&
+                payload.data.meta &&
+                payload.data.meta.fileName) ||
+              'library';
+            lastDownloadMeta = { library: libraryLabel, fileName: pageLabel };
+          } else if (payload && payload.data) {
+            lastDownloadMeta = {
+              library: payload.data.meta?.library,
+              fileName: payload.data.meta?.fileName,
+            };
+          }
+
+          var exportData = payload.data || {};
+          var components = Array.isArray(exportData.components)
+            ? exportData.components
+            : [];
+
+          renderSummary(exportData, components);
+          renderComponents(components);
+        }
+
+        function normalizeCatalogOutput(sourceData) {
+          if (!normalizedOutput) return;
+          var data = sourceData || lastExportData;
+          if (!data) {
+            normalizedOutput.value =
+              'Сначала соберите компоненты, чтобы получить данные.';
+            return;
+          }
+          var normalized = buildNormalizedCatalog(data);
+          normalizedJson = JSON.stringify(normalized, null, 2);
+          normalizedApplied = true;
+          normalizedOutput.value = normalizedJson;
+        }
+
+        function buildNormalizedCatalog(data) {
+          var meta = (data && data.meta) || {};
+          var components = Array.isArray(data.components) ? data.components : [];
+          var elements = buildCatalogElements(components);
+          return {
+            kind: 'catalog',
+            source: {
+              library: meta.library || undefined,
+              file: meta.fileName || undefined,
+              generatedAt: meta.generatedAt || undefined,
+              exportVersion: meta.version || undefined,
+              scope: meta.scope || undefined,
+              files: Array.isArray(meta.files) && meta.files.length ? meta.files : undefined,
+              componentCount: components.length,
+              elementCount: elements.length,
+            },
+            components: buildNormalizedComponents(components),
+            elements: elements,
+          };
+        }
+
+        function buildNormalizedComponents(components) {
+          return components.map(function (component) {
+            return {
+              key: component.key,
+              name: component.name,
+              status: component.status || undefined,
+              role: component.role || undefined,
+              platform: component.platform || undefined,
+              description: component.description || undefined,
+              category: component.category || undefined,
+              defaultVariant: component.defaultVariant || undefined,
+              variantStructures: component.variantStructures || undefined,
+              variants: Array.isArray(component.variants)
+                ? component.variants.map(function (variant) {
+                    return {
+                      id: variant.id,
+                      key: variant.key,
+                      name: variant.name,
+                    };
+                  })
+                : [],
+            };
+          });
+        }
+
+        function buildCatalogElements(components) {
+          var elements = [];
+          components.forEach(function (component) {
+            var structure = Array.isArray(component.structure) ? component.structure : [];
+            structure.forEach(function (node) {
+              elements.push(buildCatalogElement(node, component.name, component.key));
+            });
+          });
+          return elements;
+        }
+
+        function buildCatalogElement(node, componentName, componentKey) {
+          var path = node.path || node.name || 'Node';
+          if (componentName && path.indexOf(componentName) !== 0) {
+            path = componentName + ' / ' + path;
+          }
+          return {
+            id: typeof node.id === 'number' ? node.id : undefined,
+            path: path,
+            type: node.type || 'FRAME',
+            componentKey: componentKey,
+            visible: Boolean(node.visible),
+            layout: buildCatalogLayout(node),
+            opacity:
+              typeof node.opacity === 'number' ? node.opacity : undefined,
+            opacityToken: node.opacityToken || undefined,
+            stroke: buildCatalogStroke(node),
+            fill: buildCatalogFill(node),
+            text: buildCatalogText(node),
+            typography: buildCatalogTypography(node),
+            radiusToken: node.radiusToken || undefined,
+          };
+        }
+
+        function buildCatalogLayout(node) {
+          var padding = null;
+          if (node.layout && node.layout.padding) {
+            padding = [
+              node.layout.padding.top,
+              node.layout.padding.right,
+              node.layout.padding.bottom,
+              node.layout.padding.left,
+            ];
+          }
+          var gap =
+            node.layout && typeof node.layout.itemSpacing === 'number'
+              ? node.layout.itemSpacing
+              : null;
+          var radius = resolveCatalogRadius(node.radius);
+          var paddingTokens =
+            node.layout && node.layout.paddingTokens
+              ? node.layout.paddingTokens
+              : null;
+          var gapToken =
+            node.layout && node.layout.itemSpacingToken
+              ? node.layout.itemSpacingToken
+              : null;
+          if (
+            !padding &&
+            gap === null &&
+            radius === null &&
+            !paddingTokens &&
+            !gapToken
+          )
+            return null;
+          return {
+            padding: padding || undefined,
+            gap: gap,
+            radius: radius,
+            paddingTokens: paddingTokens || undefined,
+            gapToken: gapToken || undefined,
+          };
+        }
+
+        function resolveCatalogRadius(radius) {
+          if (radius === null || radius === undefined) return null;
+          if (typeof radius === 'number') return radius;
+          if (
+            typeof radius.topLeft === 'number' &&
+            typeof radius.topRight === 'number' &&
+            typeof radius.bottomRight === 'number' &&
+            typeof radius.bottomLeft === 'number'
+          ) {
+            return [
+              radius.topLeft,
+              radius.topRight,
+              radius.bottomRight,
+              radius.bottomLeft,
+            ];
+          }
+          return null;
+        }
+
+        function buildCatalogStroke(node) {
+          var token = node.strokeToken || null;
+          var weight = typeof node.strokeWeight === 'number' ? node.strokeWeight : null;
+          var align = node.strokeAlign || null;
+          var styleKey =
+            node.styles && node.styles.stroke ? node.styles.stroke.styleKey : null;
+          var color = null;
+          if (node.strokes && node.strokes.length) {
+            color = node.strokes
+              .map(function (paint) {
+                var c = paint.color;
+                return 'rgba(' + [c.r, c.g, c.b, c.a].join(',') + ')';
+              })
+              .join(',');
+          }
+          if (weight === null && !align && !token && !styleKey && !color) return null;
+          var result = { weight: weight, align: align };
+          if (token) {
+            result.token = token;
+          }
+          if (styleKey) {
+            result.styleKey = styleKey;
+          }
+          if (color) {
+            result.color = color;
+          }
+          return result;
+        }
+
+        function buildCatalogFill(node) {
+          var token = node.fillToken || null;
+          var styleKey =
+            node.styles && node.styles.fill ? node.styles.fill.styleKey : null;
+          var color = null;
+          if (node.fills && node.fills.length) {
+            color = node.fills
+              .map(function (paint) {
+                var c = paint.color;
+                return 'rgba(' + [c.r, c.g, c.b, c.a].join(',') + ')';
+              })
+              .join(',');
+          }
+          if (!token && !styleKey && !color) return null;
+          var result = {};
+          if (token) {
+            result.token = token;
+          }
+          if (styleKey) {
+            result.styleKey = styleKey;
+          }
+          if (color) {
+            result.color = color;
+          }
+          return result;
+        }
+
+        function buildCatalogText(node) {
+          if (!node.text || !node.text.characters) return null;
+          return { value: node.text.characters };
+        }
+
+        function buildCatalogTypography(node) {
+          var text = node.text || {};
+          var fontName = text.fontName || (node.typography && node.typography.fontName);
+          var fontSize = text.fontSize || (node.typography && node.typography.fontSize);
+          if (!fontName || !fontSize) return null;
+          var parts = fontName.split(' ');
+          var weight = parts.length > 1 ? parts[parts.length - 1] : fontName;
+          var family = parts.length > 1 ? parts.slice(0, -1).join(' ') : fontName;
+          var result = {
+            family: family,
+            weight: weight,
+            size: fontSize,
+            lineHeight: text.lineHeight,
+            letterSpacing: text.letterSpacing,
+          };
+          if (node.typographyToken) {
+            result.token = node.typographyToken;
+          }
+          if (node.styles && node.styles.text && node.styles.text.styleKey) {
+            result.styleKey = node.styles.text.styleKey;
+          }
+          return result;
+        }
+
+        function formatStructureNode(node) {
+          if (!node) return '—';
+          var parts = [];
+          parts.push(node.path || node.name || 'Node');
+          if (node.type) parts.push('type=' + node.type);
+          parts.push('visible=' + (node.visible ? 'yes' : 'no'));
+          if (node.layout && node.layout.padding) {
+            var padding = node.layout.padding;
+            parts.push(
+              'padding=' +
+                [padding.top, padding.right, padding.bottom, padding.left]
+                  .map(function (value) {
+                    return value === null || value === undefined ? '-' : value;
+                  })
+                  .join(','),
+            );
+          }
+          if (node.layout && typeof node.layout.itemSpacing === 'number') {
+            parts.push('gap=' + node.layout.itemSpacing);
+          }
+          if (node.radius !== null && node.radius !== undefined) {
+            parts.push('radius=' + formatRadius(node.radius));
+          }
+          if (node.text && node.text.characters) {
+            parts.push('text="' + node.text.characters + '"');
+          }
+          if (node.typography && node.typography.fontName) {
+            var typoParts = [];
+            typoParts.push(node.typography.fontName);
+            if (node.typography.fontSize) {
+              typoParts.push(node.typography.fontSize + 'px');
+            }
+            parts.push('type=' + typoParts.join(' '));
+          }
+          if (node.text) {
+            if (node.text.lineHeight) parts.push('lh=' + node.text.lineHeight);
+            if (node.text.letterSpacing) parts.push('ls=' + node.text.letterSpacing);
+            if (node.text.paragraphSpacing) parts.push('ps=' + node.text.paragraphSpacing);
+          }
+          if (node.fills && node.fills.length) {
+            parts.push('fill=' + formatPaints(node.fills));
+          }
+          if (node.strokes && node.strokes.length) {
+            parts.push('stroke=' + formatPaints(node.strokes));
+          }
+          if (typeof node.strokeWeight === 'number') {
+            parts.push('strokeWeight=' + node.strokeWeight);
+          }
+          if (node.strokeAlign) {
+            parts.push('strokeAlign=' + node.strokeAlign);
+          }
+          if (node.styles) {
+            if (node.styles.fill) parts.push('fill=' + node.styles.fill.styleKey);
+            if (node.styles.stroke) parts.push('stroke=' + node.styles.stroke.styleKey);
+            if (node.styles.text) parts.push('textStyle=' + node.styles.text.styleKey);
+          }
+          return parts.join(' ');
+        }
+
+        function formatRadius(radius) {
+          if (typeof radius === 'number') {
+            return radius;
+          }
+          return [
+            radius.topLeft,
+            radius.topRight,
+            radius.bottomRight,
+            radius.bottomLeft,
+          ].join(',');
+        }
+
+        function formatPaints(paints) {
+          return paints
+            .map(function (paint) {
+              var c = paint.color;
+              return 'rgba(' + [c.r, c.g, c.b, c.a].join(',') + ')';
+            })
+            .join(',');
+        }
+
+        function renderSummary(data, components) {
+          if (summaryMeta) {
+            var files =
+              data && data.meta && Array.isArray(data.meta.files)
+                ? data.meta.files
+                : [];
+            var scope = data && data.meta ? data.meta.scope : 'document';
+
+            var pagesLabel =
+              scope === 'current-page'
+                ? files[0] || '—'
+                : String(files.length);
+
+            var generatedAt =
+              data && data.meta && data.meta.generatedAt
+                ? new Date(data.meta.generatedAt).toLocaleString()
+                : '—';
+
+            var metaParts = [
+              'Компоненты: ' + components.length,
+              'Страницы: ' + pagesLabel,
+              'Сгенерировано: ' + generatedAt,
+            ];
+            summaryMeta.textContent = metaParts.join(' • ');
+          }
+
+          updateCounts(platformSummary, buildCountMap(components, 'platform'));
+          updateCounts(statusSummary, buildCountMap(components, 'status'));
+          updateCounts(roleSummary, buildCountMap(components, 'role'));
+        }
+
+        function renderComponents(components) {
+          if (!componentTableBody) return;
+          if (!components.length) {
+            componentTableBody.innerHTML =
+              '<tr><td colspan="6">Данных пока нет</td></tr>';
+            return;
+          }
+
+          var rows = components.map(function (component) {
+            var depthLabel = formatDepthList(component.depthInside);
+            if (
+              depthLabel === '—' &&
+              component.role === 'main' &&
+              typeof component.depth === 'number'
+            ) {
+              depthLabel = String(component.depth);
+            }
+            var locationLabel = '—';
+            if (component.role === 'part') {
+              if (typeof component.depthActual === 'number') {
+                locationLabel = String(component.depthActual);
+              } else {
+                locationLabel = formatDepthList(component.depthInside);
+              }
+            }
+            return (
+              '<tr>' +
+              '<td>' +
+              (component.name || '—') +
+              '</td>' +
+              '<td>' +
+              (component.platform || '—') +
+              '</td>' +
+              '<td>' +
+              (component.role || '—') +
+              '</td>' +
+              '<td>' +
+              (component.status || '—') +
+              '</td>' +
+              '<td>' +
+              depthLabel +
+              '</td>' +
+              '<td>' +
+              locationLabel +
+              '</td>' +
+              '</tr>'
+            );
+          });
+
+          componentTableBody.innerHTML = rows.join('');
+        }
+
+        function renderTokens(tokens) {
+          if (!tokenTableBody) return;
+          if (!tokens.length) {
+            tokenTableBody.innerHTML =
+              '<tr><td colspan="6">Данных пока нет</td></tr>';
+            if (tokensSummaryLabel) {
+              tokensSummaryLabel.textContent =
+                'Соберите токены, чтобы увидеть данные';
+            }
+            return;
+          }
+
+          if (tokensSummaryLabel) {
+            tokensSummaryLabel.textContent = 'Токены: ' + tokens.length;
+          }
+
+          var grouped = groupTokens(tokens);
+          var rows = [];
+          grouped.forEach(function (group) {
+            rows.push(
+              '<tr class="tokens-group">' +
+                '<td colspan="6">' +
+                escapeHtml(group.group) +
+                '</td>' +
+              '</tr>',
+            );
+
+            group.entries.forEach(function (entry) {
+              rows.push(
+                '<tr>' +
+                '<td>' +
+                escapeHtml(entry.collection || '—') +
+                '</td>' +
+                '<td>' +
+                escapeHtml(entry.mode || '—') +
+                '</td>' +
+                '<td>' +
+                escapeHtml(entry.group || '—') +
+                '</td>' +
+                '<td>' +
+                escapeHtml(entry.name || '—') +
+                '</td>' +
+                '<td>' +
+                escapeHtml(entry.value || '—') +
+                '</td>' +
+                '<td>' +
+                escapeHtml(entry.key || '—') +
+                '</td>' +
+                '</tr>',
+              );
+            });
+          });
+
+          tokenTableBody.innerHTML = rows.join('');
+        }
+
+        function renderStyles(entries, collected) {
+          if (!stylesTableBody) return;
+          if (!entries.length) {
+            stylesTableBody.innerHTML =
+              '<tr><td colspan="5">Стили не найдены</td></tr>';
+            if (stylesSummaryLabel) {
+              stylesSummaryLabel.textContent =
+                collected || stylesCollected
+                  ? 'Стили: 0'
+                  : 'Соберите стили, чтобы увидеть данные';
+            }
+            return;
+          }
+
+          if (stylesSummaryLabel) {
+            stylesSummaryLabel.textContent = 'Стили: ' + entries.length;
+          }
+
+          const rows = entries.map(function (entry) {
+            return (
+              '<tr>' +
+              '<td>' +
+              escapeHtml(entry.type || '—') +
+              '</td>' +
+              '<td>' +
+              escapeHtml(entry.group || '—') +
+              '</td>' +
+              '<td>' +
+              escapeHtml(entry.name || '—') +
+              '</td>' +
+              '<td>' +
+              escapeHtml(formatEffectDescription(entry.value) || '—') +
+              '</td>' +
+              '<td>' +
+              escapeHtml(entry.key || '—') +
+              '</td>' +
+              '</tr>'
+            );
+          });
+
+          stylesTableBody.innerHTML = rows.join('');
+        }
+
+        function formatTokenValue(value) {
+          if (isColorValue(value)) {
+            return formatColorValue(value);
+          }
+          return stringifyTokenValue(value);
+        }
+
+        function formatEffectDescription(value) {
+          if (!value) return '—';
+          if (typeof value === 'string') return value;
+          if (value.kind === 'text') {
+            var parts = [];
+            if (value.data.fontName) parts.push('font: ' + value.data.fontName);
+            if (value.data.fontSize !== null && value.data.fontSize !== undefined) {
+              parts.push('size: ' + formatNumber(value.data.fontSize));
+            }
+            if (value.data.lineHeight) {
+              parts.push('lineHeight: ' + value.data.lineHeight);
+            }
+            if (value.data.letterSpacing) {
+              parts.push('letterSpacing: ' + value.data.letterSpacing);
+            }
+            return parts.length ? parts.join(' • ') : '—';
+          }
+          if (value.kind === 'paint') {
+            var paints = (value.data && value.data.paints) || [];
+            if (!paints.length) return '—';
+            return paints
+              .map(function (paint) {
+                if (!paint) return '';
+                if (paint.type === 'solid') {
+                  if (typeof paint.opacity === 'number' && paint.opacity < 1) {
+                    return paint.color + ' @ ' + formatNumber(paint.opacity);
+                  }
+                  return paint.color || '—';
+                }
+                return paint.type || '—';
+              })
+              .filter(Boolean)
+              .join(' • ');
+          }
+          if (value.kind === 'effect') {
+            var effect = value.data;
+            var parts = [];
+            if (effect.offset) {
+              parts.push(
+                'offset: ' +
+                  formatNumber(effect.offset.x) +
+                  ', ' +
+                  formatNumber(effect.offset.y),
+              );
+            }
+            if (typeof effect.radius === 'number') {
+              parts.push('radius: ' + formatNumber(effect.radius));
+            }
+            if (typeof effect.spread === 'number') {
+              parts.push('spread: ' + formatNumber(effect.spread));
+            }
+            if (effect.color) {
+              parts.push('color: ' + colorToString(effect.color));
+            }
+            return parts.length ? parts.join(' • ') : '—';
+          }
+          return '—';
+        }
+
+        function formatNumber(value) {
+          return Number.isFinite(value) ? value.toFixed(2) : String(value);
+        }
+
+        function colorToString(color) {
+          if (!color) return '—';
+          var r = clampColorComponent(color.r);
+          var g = clampColorComponent(color.g);
+          var b = clampColorComponent(color.b);
+          var alpha =
+            typeof color.a === 'number'
+              ? color.a
+              : typeof color.alpha === 'number'
+              ? color.alpha
+              : 1;
+          var hex = toHex(r) + toHex(g) + toHex(b);
+          var rgba =
+            'rgba(' +
+            r +
+            ', ' +
+            g +
+            ', ' +
+            b +
+            ', ' +
+            alpha.toFixed(2) +
+            ')';
+          return '#' + hex + ' / ' + rgba;
+        }
+
+        function buildTokenTableEntries(data) {
+          var entries = [];
+          if (!data || !Array.isArray(data.collections)) {
+            return entries;
+          }
+
+          data.collections.forEach(function (collection) {
+            var collectionName =
+              collection.name || collection.key || 'Без коллекции';
+            var modes = Array.isArray(collection.modes) ? collection.modes : [];
+            var variables = Array.isArray(collection.variables)
+              ? collection.variables
+              : [];
+            variables.forEach(function (variable) {
+              var rawName = variable.name || variable.key || variable.id || '—';
+              var nameParts = splitTokenName(rawName);
+              var group = variable.groupName || nameParts.groupName;
+              var tokenName = variable.tokenName || nameParts.tokenName;
+              var valuesByMode = variable.valuesByMode || {};
+              var seenModes = new Set();
+              var valueRows = [];
+
+              modes.forEach(function (mode) {
+                var modeLabel = mode.name || mode.modeId || '—';
+                var value = valuesByMode[mode.modeId];
+                seenModes.add(mode.modeId);
+                valueRows.push({
+                  mode: modeLabel,
+                  value: formatTokenValue(value),
+                });
+              });
+
+              Object.keys(valuesByMode).forEach(function (modeId) {
+                if (seenModes.has(modeId)) return;
+                valueRows.push({
+                  mode: modeId,
+                  value: formatTokenValue(valuesByMode[modeId]),
+                });
+              });
+
+              if (!valueRows.length) {
+                valueRows.push({
+                  mode: '—',
+                  value: '—',
+                });
+              }
+
+              valueRows.forEach(function (valueEntry) {
+                entries.push({
+                  group: group,
+                  collection: collectionName,
+                  name: tokenName || rawName,
+                  key: variable.key || '—',
+                  mode: valueEntry.mode,
+                  value: valueEntry.value,
+                });
+              });
+            });
+          });
+
+          return entries;
+        }
+
+        function stringifyTokenValue(value) {
+          if (value === null || typeof value === 'undefined') return '—';
+          if (typeof value === 'object') {
+            try {
+              return JSON.stringify(value);
+            } catch (error) {
+              return String(value);
+            }
+          }
+          return String(value);
+        }
+
+        function splitTokenName(rawName) {
+          if (!rawName) {
+            return { groupName: 'Без группы', tokenName: 'Без названия' };
+          }
+          var trimmed = rawName.trim();
+          if (!trimmed) {
+            return { groupName: 'Без группы', tokenName: 'Без названия' };
+          }
+          var parts = trimmed.split('/');
+          if (parts.length <= 1) {
+            return { groupName: 'Без группы', tokenName: trimmed };
+          }
+          return {
+            groupName: parts[0] || 'Без группы',
+            tokenName: parts.slice(1).join('/') || 'Без названия',
+          };
+        }
+
+        function groupTokens(entries) {
+          var groups = {};
+          entries.forEach(function (entry) {
+            var groupName = entry.group || 'Без группы';
+            if (!groups[groupName]) {
+              groups[groupName] = [];
+            }
+            groups[groupName].push(entry);
+          });
+
+          return Object.keys(groups)
+            .sort()
+            .map(function (groupName) {
+              var sorted = groups[groupName].slice();
+              sorted.sort(function (a, b) {
+                return a.name.localeCompare(b.name);
+              });
+              return {
+                group: groupName,
+                entries: sorted,
+              };
+            });
+        }
+
+        function escapeHtml(value) {
+          if (value === null || typeof value === 'undefined') return '';
+          return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+
+        function isColorValue(value) {
+          return (
+            value &&
+            typeof value === 'object' &&
+            typeof value.r === 'number' &&
+            typeof value.g === 'number' &&
+            typeof value.b === 'number'
+          );
+        }
+
+        function formatColorValue(value) {
+          var r = clampColorComponent(value.r);
+          var g = clampColorComponent(value.g);
+          var b = clampColorComponent(value.b);
+          var alpha =
+            typeof value.a === 'number'
+              ? value.a
+              : typeof value.alpha === 'number'
+              ? value.alpha
+              : 1;
+          alpha = Math.max(0, Math.min(1, alpha));
+          var hex = toHex(r) + toHex(g) + toHex(b);
+          var rgba =
+            'rgba(' +
+            r +
+            ', ' +
+            g +
+            ', ' +
+            b +
+            ', ' +
+            alpha.toFixed(2) +
+            ')';
+          return '#' + hex + ' / ' + rgba;
+        }
+
+        function clampColorComponent(value) {
+          var normalized = typeof value === 'number' ? value : 0;
+          var scaled = Math.round(normalized * 255);
+          return Math.max(0, Math.min(255, scaled));
+        }
+
+        function toHex(component) {
+          var hex = component.toString(16).toUpperCase();
+          return hex.length === 1 ? '0' + hex : hex;
+        }
+
+        function formatDepthList(values) {
+          if (!Array.isArray(values)) return '—';
+          var normalized = values
+            .filter(function (value) {
+              return typeof value === 'number' && !isNaN(value);
+            })
+            .map(function (value) {
+              return String(value);
+            });
+          var unique = Array.from(new Set(normalized));
+          return unique.length ? unique.join(', ') : '—';
+        }
+
+        function buildCountMap(components, key) {
+          if (!Array.isArray(components)) return {};
+          return components.reduce(function (acc, component) {
+            var value = component && component[key];
+            if (!value) return acc;
+
+            acc[value] = (acc[value] || 0) + 1;
+            return acc;
+          }, {});
+        }
+
+        function updateCounts(element, counts) {
+          if (!element) return;
+          var entries = Object.entries(counts || {});
+          if (!entries.length) {
+            element.textContent = '—';
+            return;
+          }
+
+          element.textContent = entries
+            .map(function (entry) {
+              return entry[0] + ': ' + entry[1];
+            })
+            .join(' • ');
+        }
+
+
+        function updateContinueState(progress) {
+          if (!continueBtn) return;
+          if (!progress) {
+            continueBtn.style.display = 'none';
+            waitingForContinue = false;
+            continueBtn.disabled = false;
+            updateProgressLabel(null);
+            return;
+          }
+
+          if (progress.autoContinue) {
+            continueBtn.style.display = 'none';
+            waitingForContinue = false;
+            continueBtn.disabled = false;
+            updateProgressLabel(progress);
+            return;
+          }
+
+          continueBtn.style.display = 'inline-flex';
+          waitingForContinue = Boolean(progress.hasMore);
+          continueBtn.disabled = !waitingForContinue;
+          continueBtn.textContent = waitingForContinue
+            ? 'Следующая страница'
+            : 'Готово';
+          updateProgressLabel(progress);
+        }
+
+        function triggerDownload() {
+          var content = normalizedApplied ? normalizedJson : lastTextareaContent;
+          if (!content) {
+            console.warn('[UI] nothing to download yet');
+            return;
+          }
+          downloadEntry(
+            content,
+            lastDownloadMeta,
+            lastDownloadMeta && lastDownloadMeta.fileName
+              ? lastDownloadMeta.fileName
+              : 'export',
+            );
+        }
+        function triggerStyleDownload() {
+          if (!lastStylesJson) {
+            console.warn('[UI] no styles to download yet');
+            return;
+          }
+          downloadEntry(
+            lastStylesJson,
+            lastStylesMeta,
+            lastStylesMeta && lastStylesMeta.fileName
+              ? lastStylesMeta.fileName
+              : 'styles',
+          );
+        }
+        function triggerTokenDownload() {
+          if (!lastTokensJson) {
+            console.warn('[UI] no tokens to download yet');
+            return;
+          }
+          downloadEntry(
+            lastTokensJson,
+            lastTokensMeta,
+            lastTokensMeta && lastTokensMeta.fileName
+              ? lastTokensMeta.fileName
+              : 'tokens',
+          );
+        }
+        function downloadEntry(json, meta, fallbackName) {
+          var safeName = resolveFileName(meta, fallbackName);
+          var blob = new Blob([json], { type: 'application/json' });
+          var url = URL.createObjectURL(blob);
+
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = safeName + '.json';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
+
+        function resolveFileName(meta, fallback) {
+          var library = (meta && meta.library) || 'library';
+          var page = fallback;
+          if (!page) {
+            if (meta && meta.files && meta.files.length) {
+              page = meta.files[0];
+            } else if (meta && meta.fileName) {
+              page = meta.fileName;
+            } else {
+              page = 'page';
+            }
+          }
+          var normalizedLibrary = (library && library.trim()) || '';
+          var normalizedPage = (page && page.trim()) || 'page';
+          var candidate = normalizedPage;
+          if (normalizedLibrary && normalizedLibrary !== normalizedPage) {
+            candidate = normalizedLibrary + ' -- ' + normalizedPage;
+          }
+          return sanitizeFileName(candidate);
+        }
+
+        function normalizeName(rawName) {
+          if (!rawName) return 'export';
+          return rawName
+            .split('/')
+            .map(function (part) {
+              return part.trim();
+            })
+            .filter(Boolean)
+            .join(' ');
+        }
+
+        function sanitizeFileName(name) {
+          var trimmed = name.trim();
+          if (!trimmed) return 'export';
+          return trimmed.replace(/[\\\/:*?"<>|]+/g, '_');
+        }
+
+        function startTimer() {
+          if (!timerDisplay) return;
+          if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+          }
+          timerStart = Date.now();
+          updateTimerDisplay(0);
+          timerInterval = setInterval(function () {
+            if (!timerStart) return;
+            updateTimerDisplay(Date.now() - timerStart);
+          }, 1000);
+        }
+
+        function stopTimer() {
+          if (!timerDisplay) return;
+          if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+          }
+          if (!timerStart) {
+            timerDisplay.textContent = '00:00';
+            return;
+          }
+          updateTimerDisplay(Date.now() - timerStart);
+          timerStart = null;
+        }
+
+        function updateTimerDisplay(elapsedMs) {
+          if (!timerDisplay) return;
+          var totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+          var minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+          var seconds = String(totalSeconds % 60).padStart(2, '0');
+          timerDisplay.textContent = minutes + ':' + seconds;
+        }
+      })();
+    </script>
+  </body>
+</html>
