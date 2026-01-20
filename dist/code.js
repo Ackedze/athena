@@ -1,5 +1,26 @@
 "use strict";
 (() => {
+  // src/debug.ts
+  var DEBUG_MODE = false;
+  function logDebug(topic, detail) {
+    if (!DEBUG_MODE) return;
+    const entry = {
+      topic,
+      detail,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    try {
+      console.log("[Athena::debug]", entry);
+    } catch (error) {
+      console.log("[Athena::debug]", topic, detail);
+    }
+    try {
+      figma.ui.postMessage({ type: "debug-log", payload: entry });
+    } catch (error) {
+      console.warn("[Athena::debug] failed to forward log to UI", error);
+    }
+  }
+
   // src/engine/component/utils/inferCategory.ts
   function inferCategoryFromName(name) {
     const cleaned = name.replace(/^[^\wА-Яа-я]+/, "").trim();
@@ -715,27 +736,6 @@
     return name.replace(/^[^A-Za-z0-9А-Яа-яЁё]+/, "").trim();
   }
 
-  // src/debug.ts
-  var DEBUG_MODE = false;
-  function logDebug(topic, detail) {
-    if (!DEBUG_MODE) return;
-    const entry = {
-      topic,
-      detail,
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    try {
-      console.log("[Athena::debug]", entry);
-    } catch (error) {
-      console.log("[Athena::debug]", topic, detail);
-    }
-    try {
-      figma.ui.postMessage({ type: "debug-log", payload: entry });
-    } catch (error) {
-      console.warn("[Athena::debug] failed to forward log to UI", error);
-    }
-  }
-
   // src/engine/component/componentParser.ts
   function extractComponentsFromDocument() {
     const pages = [];
@@ -1109,309 +1109,328 @@
     return JSON.parse(JSON.stringify(node));
   }
 
-  // src/code.ts
+  // src/exportSanitizer.ts
+  function sanitizeExportPayload(data) {
+    const sanitizedComponents = data.components.map((component) => {
+      const sanitizedComponent = Object.assign({}, component, {
+        structure: component.structure.map(trimStructureNode),
+        variantStructures: component.variantStructures ? sanitizeVariantStructures(component.variantStructures) : void 0
+      });
+      delete sanitizedComponent.parentComponent;
+      delete sanitizedComponent.parentComponents;
+      return sanitizedComponent;
+    });
+    return Object.assign({}, data, { components: sanitizedComponents });
+  }
+  function sanitizeVariantStructures(variants) {
+    const result = {};
+    for (const key in variants) {
+      const patches = variants[key];
+      result[key] = patches.map(trimVariantPatch);
+    }
+    return result;
+  }
+  function trimVariantPatch(patch) {
+    if (patch.op === "update") {
+      return Object.assign({}, patch, {
+        value: trimPatchValue(patch.value)
+      });
+    }
+    if (patch.op === "add") {
+      return Object.assign({}, patch, {
+        node: trimStructureNode(patch.node)
+      });
+    }
+    return patch;
+  }
+  function trimPatchValue(value) {
+    const trimmed = {};
+    if ("id" in value) trimmed.id = value.id;
+    if ("path" in value) trimmed.path = value.path;
+    if ("type" in value) trimmed.type = value.type;
+    if ("name" in value) trimmed.name = value.name;
+    if ("visible" in value) trimmed.visible = value.visible;
+    if ("styles" in value) trimmed.styles = value.styles;
+    if ("layout" in value) trimmed.layout = value.layout;
+    if ("opacity" in value) trimmed.opacity = value.opacity;
+    if ("opacityToken" in value) trimmed.opacityToken = value.opacityToken;
+    if ("radius" in value) trimmed.radius = value.radius;
+    if ("radiusToken" in value) trimmed.radiusToken = value.radiusToken;
+    if ("effects" in value) trimmed.effects = value.effects;
+    if ("componentInstance" in value) {
+      trimmed.componentInstance = value.componentInstance;
+    }
+    if ("text" in value) trimmed.text = value.text;
+    if ("fills" in value) trimmed.fills = value.fills;
+    if ("fillToken" in value) trimmed.fillToken = value.fillToken;
+    if ("strokes" in value) trimmed.strokes = value.strokes;
+    if ("strokeToken" in value) trimmed.strokeToken = value.strokeToken;
+    if ("strokeWeight" in value) trimmed.strokeWeight = value.strokeWeight;
+    if ("strokeAlign" in value) trimmed.strokeAlign = value.strokeAlign;
+    if ("typography" in value) trimmed.typography = value.typography;
+    if ("typographyToken" in value) trimmed.typographyToken = value.typographyToken;
+    return trimmed;
+  }
+  function trimStructureNode(node) {
+    return {
+      id: node.id,
+      parentId: node.parentId,
+      path: node.path,
+      type: node.type,
+      name: node.name,
+      visible: node.visible,
+      styles: node.styles,
+      layout: node.layout,
+      opacity: node.opacity,
+      opacityToken: node.opacityToken,
+      radius: node.radius,
+      radiusToken: node.radiusToken,
+      effects: node.effects,
+      text: node.text,
+      fills: node.fills,
+      fillToken: node.fillToken,
+      strokes: node.strokes,
+      strokeToken: node.strokeToken,
+      strokeWeight: node.strokeWeight,
+      strokeAlign: node.strokeAlign,
+      typography: node.typography,
+      typographyToken: node.typographyToken,
+      componentInstance: node.componentInstance
+    };
+  }
+
+  // src/pagedExport.ts
+  function createPagedExportController(sendExportResult2) {
+    let pagedSession = null;
+    let sessionCounter = 0;
+    let exportCancelToken = null;
+    function startFromCurrentPage() {
+      const pages = getPagesStartingFromCurrentPage();
+      if (pages.length === 0) {
+        const data = extractComponentsFromCurrentPage();
+        sendExportResult2("CURRENT PAGE", data);
+        return;
+      }
+      startPagedExport(pages, false, "current-page");
+    }
+    function startFromDocument() {
+      const pages = getAllPages();
+      if (pages.length === 0) {
+        const data = extractComponentsFromDocument();
+        sendExportResult2("ALL", data);
+        return;
+      }
+      startPagedExport(pages, true, "document");
+    }
+    function startPagedExport(pages, autoContinue, scope) {
+      sessionCounter += 1;
+      pagedSession = {
+        id: sessionCounter,
+        totalPages: pages.length,
+        pendingPages: [...pages],
+        processedPages: 0,
+        components: [],
+        errors: [],
+        autoContinue,
+        scope
+      };
+      exportCancelToken = { aborted: false };
+      logDebug("paged-export-start", {
+        sessionId: sessionCounter,
+        totalPages: pages.length,
+        autoContinue,
+        scope
+      });
+      void processNextPage();
+    }
+    function getPagesStartingFromCurrentPage() {
+      const pages = [];
+      for (const child of figma.root.children) {
+        if (child.type === "PAGE") {
+          pages.push(child);
+        }
+      }
+      if (pages.length === 0) return [];
+      const current = figma.currentPage;
+      const index = pages.findIndex((page) => page.id === current.id);
+      if (index <= 0) return pages;
+      return pages.slice(index).concat(pages.slice(0, index));
+    }
+    function getAllPages() {
+      const pages = [];
+      for (const child of figma.root.children) {
+        if (child.type === "PAGE") {
+          pages.push(child);
+        }
+      }
+      return pages;
+    }
+    function cancel() {
+      if (exportCancelToken) {
+        exportCancelToken.aborted = true;
+        exportCancelToken = null;
+      }
+      pagedSession = null;
+      figma.ui.postMessage({ type: "export-cancelled" });
+    }
+    function continueExport() {
+      if (!pagedSession) return;
+      void processNextPage();
+    }
+    async function processNextPage() {
+      if (!pagedSession) return;
+      const session = pagedSession;
+      if (session.pendingPages.length === 0) {
+        finalizePagedExport();
+        return;
+      }
+      const page = session.pendingPages.shift();
+      console.log(
+        "[CODE] processing page",
+        page.name,
+        "processed",
+        session.processedPages
+      );
+      logDebug("paged-page-start", {
+        page: page.name,
+        remaining: session.pendingPages.length,
+        processed: session.processedPages
+      });
+      const { components, errors, pageHasComponents, aborted } = await collectComponentsFromPageChunked(
+        page,
+        exportCancelToken,
+        (processedNodes) => {
+          figma.ui.postMessage({
+            type: "export-progress",
+            payload: {
+              sessionId: session.id,
+              pageName: normalizePageName4(page.name),
+              processedNodes,
+              completedPages: session.processedPages,
+              totalPages: session.totalPages
+            }
+          });
+        }
+      );
+      if (aborted) {
+        console.log("[CODE] paged export aborted");
+        finalizePagedExport();
+        return;
+      }
+      logDebug("paged-page-result", {
+        page: page.name,
+        components: components.length,
+        errors: errors.length
+      });
+      session.components.push(...components);
+      session.errors.push(...errors);
+      session.processedPages += 1;
+      const normalizedPageName = normalizePageName4(page.name);
+      const pageExport = buildPageExport(page, components, pageHasComponents);
+      const hasMore = session.pendingPages.length > 0;
+      sendPagedProgress(pageExport, hasMore, normalizedPageName);
+      if (!hasMore) {
+        finalizePagedExport();
+        return;
+      }
+      if (session.autoContinue) {
+        setTimeout(() => {
+          void processNextPage();
+        }, 0);
+      }
+    }
+    function buildPageExport(page, components, pageHasComponents) {
+      const normalizedPageName = normalizePageName4(page.name);
+      return {
+        meta: {
+          generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          version: "0.1.0",
+          files: pageHasComponents ? [normalizedPageName] : [],
+          scope: "current-page",
+          fileName: figma.root.name,
+          library: figma.root.name
+        },
+        components,
+        tokens: [],
+        typography: [],
+        spacing: [],
+        radius: []
+      };
+    }
+    function sendPagedProgress(pageExport, hasMore, currentPage) {
+      if (!pagedSession) return;
+      const session = pagedSession;
+      const sanitized = sanitizeExportPayload(pageExport);
+      const json = JSON.stringify(sanitized, null, 2);
+      figma.ui.postMessage({
+        type: "export-result",
+        payload: {
+          json,
+          data: sanitized,
+          mode: "paged",
+          pageName: normalizePageName4(currentPage),
+          progress: {
+            completed: session.processedPages,
+            total: session.totalPages,
+            hasMore,
+            autoContinue: session.autoContinue,
+            currentPage
+          }
+        }
+      });
+    }
+    function finalizePagedExport() {
+      if (!pagedSession) return;
+      notifyPagedErrors(pagedSession.errors);
+      logDebug("paged-export-finished", {
+        processedPages: pagedSession.processedPages,
+        errors: pagedSession.errors.length
+      });
+      pagedSession = null;
+    }
+    function notifyPagedErrors(errors) {
+      if (errors.length === 0) return;
+      console.warn("[Athena] component parsing errors:", errors);
+      figma.notify(
+        `\u041D\u0435\u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u044B \u043D\u0435 \u0432\u044B\u0433\u0440\u0443\u0436\u0435\u043D\u044B (${errors.length}). \u0421\u043C. \u043A\u043E\u043D\u0441\u043E\u043B\u044C.`,
+        { timeout: 5e3 }
+      );
+    }
+    function normalizePageName4(name) {
+      if (!name) return "";
+      return name.replace(/^[^A-Za-z0-9А-Яа-яЁё]+/, "").trim();
+    }
+    return {
+      startFromCurrentPage,
+      startFromDocument,
+      continue: continueExport,
+      cancel
+    };
+  }
+
+  // src/nameUtils.ts
+  function splitVariableName(rawName) {
+    if (!rawName) {
+      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F" };
+    }
+    const trimmed = rawName.trim();
+    if (!trimmed) {
+      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F" };
+    }
+    const parts = trimmed.split("/");
+    if (parts.length <= 1) {
+      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: trimmed };
+    }
+    return {
+      groupName: parts[0] || "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B",
+      tokenName: parts.slice(1).join("/") || "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F"
+    };
+  }
+
+  // src/tokenExport.ts
   var blueTintTokensUrl = "https://ackedze.github.io/nemesis/JSONS/BlueTint Base Colors -- BlueTint Base Colors.json";
   var blueTintVariableMap = null;
   var blueTintLoadPromise = null;
-  console.log("[CODE] plugin loaded");
-  logDebug("plugin-loaded");
-  figma.showUI(__html__, { width: 1280, height: 720 });
-  console.log("[CODE] UI shown");
-  logDebug("ui-shown", { width: 1280, height: 720 });
-  figma.ui.onmessage = (msg) => {
-    console.log("[CODE] received message from UI:", msg);
-    logDebug("ui-message", msg);
-    if (msg.type === "test") {
-      console.log("[CODE] test message received, sending echo");
-      figma.ui.postMessage({
-        type: "echo",
-        payload: { received: msg }
-      });
-      return;
-    }
-    if (msg.type === "export-components") {
-      console.log("[CODE] starting paged export for document");
-      logDebug("export-components-request");
-      cancelPagedExport();
-      startPagedExportFromDocument();
-      return;
-    }
-    if (msg.type === "export-components-current-page") {
-      console.log("[CODE] starting paged export from current page");
-      logDebug("export-current-page-request");
-      cancelPagedExport();
-      startPagedExportFromCurrentPage();
-      return;
-    }
-    if (msg.type === "export-components-continue") {
-      console.log("[CODE] continuing paged export");
-      logDebug("export-components-continue-request");
-      continuePagedExport();
-      return;
-    }
-    if (msg.type === "cancel-export") {
-      console.log("[CODE] cancel paged export");
-      cancelPagedExport();
-      return;
-    }
-    if (msg.type === "collect-tokens") {
-      console.log("[CODE] collecting tokens");
-      logDebug("collect-tokens-request");
-      collectTokensAndSend();
-      return;
-    }
-    if (msg.type === "collect-styles") {
-      console.log("[CODE] collecting styles");
-      logDebug("collect-styles-request");
-      collectStylesAndSend();
-      return;
-    }
-  };
-  function sendExportResult(scope, data) {
-    const sanitized = sanitizeExportPayload(data);
-    const json = JSON.stringify(sanitized, null, 2);
-    console.log(`[CODE] sending export-result (${scope}). length =`, json.length);
-    logDebug("send-export", {
-      scope,
-      components: data.components.length,
-      meta: data.meta
-    });
-    figma.ui.postMessage({
-      type: "export-result",
-      payload: { json, data: sanitized, mode: "full" }
-    });
-  }
-  var pagedSession = null;
-  var sessionCounter = 0;
-  var exportCancelToken = null;
-  function startPagedExportFromCurrentPage() {
-    const pages = getPagesStartingFromCurrentPage();
-    if (pages.length === 0) {
-      const data = extractComponentsFromCurrentPage();
-      sendExportResult("CURRENT PAGE", data);
-      return;
-    }
-    startPagedExport(pages, false, "current-page");
-  }
-  function startPagedExportFromDocument() {
-    const pages = getAllPages();
-    if (pages.length === 0) {
-      const data = extractComponentsFromDocument();
-      sendExportResult("ALL", data);
-      return;
-    }
-    startPagedExport(pages, true, "document");
-  }
-  function startPagedExport(pages, autoContinue, scope) {
-    sessionCounter += 1;
-    pagedSession = {
-      id: sessionCounter,
-      totalPages: pages.length,
-      pendingPages: [...pages],
-      processedPages: 0,
-      components: [],
-      errors: [],
-      autoContinue,
-      scope
-    };
-    exportCancelToken = { aborted: false };
-    logDebug("paged-export-start", {
-      sessionId: sessionCounter,
-      totalPages: pages.length,
-      autoContinue,
-      scope
-    });
-    void processNextPage();
-  }
-  function getPagesStartingFromCurrentPage() {
-    const pages = [];
-    for (const child of figma.root.children) {
-      if (child.type === "PAGE") {
-        pages.push(child);
-      }
-    }
-    if (pages.length === 0) return [];
-    const current = figma.currentPage;
-    const index = pages.findIndex((page) => page.id === current.id);
-    if (index <= 0) return pages;
-    return pages.slice(index).concat(pages.slice(0, index));
-  }
-  function getAllPages() {
-    const pages = [];
-    for (const child of figma.root.children) {
-      if (child.type === "PAGE") {
-        pages.push(child);
-      }
-    }
-    return pages;
-  }
-  function cancelPagedExport() {
-    if (exportCancelToken) {
-      exportCancelToken.aborted = true;
-      exportCancelToken = null;
-    }
-    pagedSession = null;
-    figma.ui.postMessage({ type: "export-cancelled" });
-  }
-  function continuePagedExport() {
-    if (!pagedSession) return;
-    void processNextPage();
-  }
-  async function processNextPage() {
-    if (!pagedSession) return;
-    const session = pagedSession;
-    if (session.pendingPages.length === 0) {
-      finalizePagedExport();
-      return;
-    }
-    const page = session.pendingPages.shift();
-    console.log(
-      "[CODE] processing page",
-      page.name,
-      "processed",
-      session.processedPages
-    );
-    logDebug("paged-page-start", {
-      page: page.name,
-      remaining: session.pendingPages.length,
-      processed: session.processedPages
-    });
-    const { components, errors, pageHasComponents, aborted } = await collectComponentsFromPageChunked(
-      page,
-      exportCancelToken,
-      (processedNodes) => {
-        figma.ui.postMessage({
-          type: "export-progress",
-          payload: {
-            sessionId: session.id,
-            pageName: normalizePageName4(page.name),
-            processedNodes,
-            completedPages: session.processedPages,
-            totalPages: session.totalPages
-          }
-        });
-      }
-    );
-    if (aborted) {
-      console.log("[CODE] paged export aborted");
-      finalizePagedExport();
-      return;
-    }
-    logDebug("paged-page-result", {
-      page: page.name,
-      components: components.length,
-      errors: errors.length
-    });
-    session.components.push(...components);
-    session.errors.push(...errors);
-    session.processedPages += 1;
-    const normalizedPageName = normalizePageName4(page.name);
-    const pageExport = buildPageExport(page, components, pageHasComponents);
-    const hasMore = session.pendingPages.length > 0;
-    sendPagedProgress(pageExport, hasMore, normalizedPageName);
-    if (!hasMore) {
-      finalizePagedExport();
-      return;
-    }
-    if (session.autoContinue) {
-      setTimeout(() => {
-        void processNextPage();
-      }, 0);
-    }
-  }
-  function buildPageExport(page, components, pageHasComponents) {
-    const normalizedPageName = normalizePageName4(page.name);
-    return {
-      meta: {
-        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        version: "0.1.0",
-        files: pageHasComponents ? [normalizedPageName] : [],
-        scope: "current-page",
-        fileName: figma.root.name,
-        library: figma.root.name
-      },
-      components,
-      tokens: [],
-      typography: [],
-      spacing: [],
-      radius: []
-    };
-  }
-  function sendPagedProgress(pageExport, hasMore, currentPage) {
-    if (!pagedSession) return;
-    const session = pagedSession;
-    const sanitized = sanitizeExportPayload(pageExport);
-    const json = JSON.stringify(sanitized, null, 2);
-    figma.ui.postMessage({
-      type: "export-result",
-      payload: {
-        json,
-        data: sanitized,
-        mode: "paged",
-        pageName: normalizePageName4(currentPage),
-        progress: {
-          completed: session.processedPages,
-          total: session.totalPages,
-          hasMore,
-          autoContinue: session.autoContinue,
-          currentPage
-        }
-      }
-    });
-  }
-  function finalizePagedExport() {
-    if (!pagedSession) return;
-    notifyPagedErrors(pagedSession.errors);
-    logDebug("paged-export-finished", {
-      processedPages: pagedSession.processedPages,
-      errors: pagedSession.errors.length
-    });
-    pagedSession = null;
-  }
-  function notifyPagedErrors(errors) {
-    if (errors.length === 0) return;
-    console.warn("[Athena] component parsing errors:", errors);
-    figma.notify(
-      `\u041D\u0435\u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u044B \u043D\u0435 \u0432\u044B\u0433\u0440\u0443\u0436\u0435\u043D\u044B (${errors.length}). \u0421\u043C. \u043A\u043E\u043D\u0441\u043E\u043B\u044C.`,
-      { timeout: 5e3 }
-    );
-  }
-  async function collectTokensAndSend() {
-    try {
-      const payload = await collectTokensFromFile();
-      const json = JSON.stringify(payload, null, 2);
-      logDebug("collect-tokens-result", {
-        collections: payload.collections.length
-      });
-      figma.ui.postMessage({
-        type: "collect-tokens-result",
-        payload: { json, data: payload }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430";
-      console.error("[CODE] failed to collect tokens", error);
-      logDebug("collect-tokens-error", { error: message });
-      figma.notify(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0442\u043E\u043A\u0435\u043D\u044B: ${message}`, { timeout: 5e3 });
-    }
-  }
-  function collectStylesAndSend() {
-    try {
-      const payload = collectStylesFromDocument();
-      const json = JSON.stringify(payload, null, 2);
-      logDebug("collect-styles-result", {
-        styles: payload.styles.length
-      });
-      figma.ui.postMessage({
-        type: "collect-styles-result",
-        payload: { json, data: payload }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430";
-      console.error("[CODE] failed to collect styles", error);
-      logDebug("collect-styles-error", { error: message });
-      figma.notify(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0441\u0442\u0438\u043B\u0438: ${message}`, { timeout: 5e3 });
-    }
-  }
   async function collectTokensFromFile() {
     if (!figma.variables) {
       throw new Error("Variables API not \u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u0432 \u044D\u0442\u043E\u043C \u0444\u0430\u0439\u043B\u0435");
@@ -1453,135 +1472,6 @@
         library: figma.root.name
       },
       collections: collectionExports
-    };
-  }
-  function collectStylesFromDocument() {
-    const effectStyles = figma.getLocalEffectStyles();
-    const textStyles = figma.getLocalTextStyles();
-    const paintStyles = figma.getLocalPaintStyles();
-    const entries = [];
-    for (const style of effectStyles) {
-      const nameParts = splitVariableName(style.name);
-      const group = nameParts.groupName;
-      const baseName = nameParts.tokenName || style.name;
-      const effects = Array.isArray(style.effects) ? style.effects : [];
-      for (const effect of effects) {
-        entries.push({
-          key: style.key,
-          name: baseName,
-          group,
-          type: formatEffectType(effect.type),
-          value: { kind: "effect", data: effect }
-        });
-      }
-    }
-    for (const style of textStyles) {
-      const nameParts = splitVariableName(style.name);
-      const group = nameParts.groupName;
-      const baseName = nameParts.tokenName || style.name;
-      entries.push({
-        key: style.key,
-        name: baseName,
-        group,
-        type: "text",
-        value: { kind: "text", data: describeTextStyle(style) }
-      });
-    }
-    for (const style of paintStyles) {
-      const nameParts = splitVariableName(style.name);
-      const group = nameParts.groupName;
-      const baseName = nameParts.tokenName || style.name;
-      entries.push({
-        key: style.key,
-        name: baseName,
-        group,
-        type: "paint",
-        value: { kind: "paint", data: describePaintStyle(style) }
-      });
-    }
-    return {
-      meta: {
-        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        fileName: figma.root.name,
-        library: figma.root.name
-      },
-      styles: entries
-    };
-  }
-  function formatEffectType(type) {
-    return type.toLowerCase().replace("_", " ");
-  }
-  function describeTextStyle(style) {
-    const fontName = style.fontName;
-    const fontLabel = fontName && fontName !== figma.mixed ? `${fontName.family} ${fontName.style}`.trim() : "\u2014";
-    const fontSize = style.fontSize !== figma.mixed && typeof style.fontSize === "number" ? style.fontSize : null;
-    const lineHeight = style.lineHeight !== figma.mixed && style.lineHeight ? formatLineHeight(style.lineHeight) : null;
-    const letterSpacing = style.letterSpacing !== figma.mixed && style.letterSpacing ? formatLetterSpacing(style.letterSpacing) : null;
-    return {
-      fontName: fontLabel === "\u2014" ? null : fontLabel,
-      fontSize,
-      lineHeight,
-      letterSpacing
-    };
-  }
-  function describePaintStyle(style) {
-    const paints = Array.isArray(style.paints) ? style.paints : [];
-    return {
-      paints: paints.map(serializePaintValue).filter(Boolean)
-    };
-  }
-  function serializePaintValue(paint) {
-    if (!paint) return null;
-    if (paint.type === "SOLID") {
-      const color = colorToString(paint.color);
-      const opacity = typeof paint.opacity === "number" ? paint.opacity : void 0;
-      return {
-        type: "solid",
-        color,
-        opacity
-      };
-    }
-    return {
-      type: paint.type.toLowerCase().replace("_", " ")
-    };
-  }
-  function formatLineHeight(lineHeight) {
-    if (lineHeight.unit === "AUTO") return "auto";
-    if (lineHeight.unit === "PIXELS") return formatNumber(lineHeight.value);
-    if (lineHeight.unit === "PERCENT") return formatNumber(lineHeight.value) + "%";
-    return String(lineHeight.value);
-  }
-  function formatLetterSpacing(letterSpacing) {
-    if (letterSpacing.unit === "PIXELS") return formatNumber(letterSpacing.value);
-    if (letterSpacing.unit === "PERCENT") return formatNumber(letterSpacing.value) + "%";
-    return String(letterSpacing.value);
-  }
-  function formatNumber(value) {
-    return Number.isFinite(value) ? value.toFixed(2) : String(value);
-  }
-  function colorToString(color) {
-    const r = clampColorComponent2(color.r);
-    const g = clampColorComponent2(color.g);
-    const b = clampColorComponent2(color.b);
-    const alpha = typeof color.a === "number" ? color.a : typeof color.alpha === "number" ? color.alpha : 1;
-    const rgba = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
-    return "#" + toHex2(r) + toHex2(g) + toHex2(b) + " / " + rgba;
-  }
-  function splitVariableName(rawName) {
-    if (!rawName) {
-      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F" };
-    }
-    const trimmed = rawName.trim();
-    if (!trimmed) {
-      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F" };
-    }
-    const parts = trimmed.split("/");
-    if (parts.length <= 1) {
-      return { groupName: "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B", tokenName: trimmed };
-    }
-    return {
-      groupName: parts[0] || "\u0411\u0435\u0437 \u0433\u0440\u0443\u043F\u043F\u044B",
-      tokenName: parts.slice(1).join("/") || "\u0411\u0435\u0437 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F"
     };
   }
   function serializeVariable(variable, collectionName) {
@@ -1744,97 +1634,237 @@
     }
     throw new Error("\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E\u0433\u043E API \u0434\u043B\u044F \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438 \u0434\u0430\u043D\u043D\u044B\u0445 (fetch/requestHTTPsAsync)");
   }
-  function normalizePageName4(name) {
-    if (!name) return "";
-    return name.replace(/^[^A-Za-z0-9А-Яа-яЁё]+/, "").trim();
-  }
-  function sanitizeExportPayload(data) {
-    const sanitizedComponents = data.components.map((component) => {
-      const sanitizedComponent = Object.assign({}, component, {
-        structure: component.structure.map(trimStructureNode),
-        variantStructures: component.variantStructures ? sanitizeVariantStructures(component.variantStructures) : void 0
+
+  // src/styleExport.ts
+  function collectStylesFromDocument() {
+    const effectStyles = figma.getLocalEffectStyles();
+    const textStyles = figma.getLocalTextStyles();
+    const paintStyles = figma.getLocalPaintStyles();
+    const entries = [];
+    for (const style of effectStyles) {
+      const nameParts = splitVariableName(style.name);
+      const group = nameParts.groupName;
+      const baseName = nameParts.tokenName || style.name;
+      const effects = Array.isArray(style.effects) ? style.effects : [];
+      for (const effect of effects) {
+        entries.push({
+          key: style.key,
+          name: baseName,
+          group,
+          type: formatEffectType(effect.type),
+          value: { kind: "effect", data: effect }
+        });
+      }
+    }
+    for (const style of textStyles) {
+      const nameParts = splitVariableName(style.name);
+      const group = nameParts.groupName;
+      const baseName = nameParts.tokenName || style.name;
+      entries.push({
+        key: style.key,
+        name: baseName,
+        group,
+        type: "text",
+        value: { kind: "text", data: describeTextStyle(style) }
       });
-      delete sanitizedComponent.parentComponent;
-      delete sanitizedComponent.parentComponents;
-      return sanitizedComponent;
-    });
-    return Object.assign({}, data, { components: sanitizedComponents });
-  }
-  function sanitizeVariantStructures(variants) {
-    const result = {};
-    for (const key in variants) {
-      const patches = variants[key];
-      result[key] = patches.map(trimVariantPatch);
     }
-    return result;
-  }
-  function trimVariantPatch(patch) {
-    if (patch.op === "update") {
-      return Object.assign({}, patch, {
-        value: trimPatchValue(patch.value)
+    for (const style of paintStyles) {
+      const nameParts = splitVariableName(style.name);
+      const group = nameParts.groupName;
+      const baseName = nameParts.tokenName || style.name;
+      entries.push({
+        key: style.key,
+        name: baseName,
+        group,
+        type: "paint",
+        value: { kind: "paint", data: describePaintStyle(style) }
       });
     }
-    if (patch.op === "add") {
-      return Object.assign({}, patch, {
-        node: trimStructureNode(patch.node)
-      });
-    }
-    return patch;
-  }
-  function trimPatchValue(value) {
-    const trimmed = {};
-    if ("id" in value) trimmed.id = value.id;
-    if ("path" in value) trimmed.path = value.path;
-    if ("type" in value) trimmed.type = value.type;
-    if ("name" in value) trimmed.name = value.name;
-    if ("visible" in value) trimmed.visible = value.visible;
-    if ("styles" in value) trimmed.styles = value.styles;
-    if ("layout" in value) trimmed.layout = value.layout;
-    if ("opacity" in value) trimmed.opacity = value.opacity;
-    if ("opacityToken" in value) trimmed.opacityToken = value.opacityToken;
-    if ("radius" in value) trimmed.radius = value.radius;
-    if ("radiusToken" in value) trimmed.radiusToken = value.radiusToken;
-    if ("effects" in value) trimmed.effects = value.effects;
-    if ("componentInstance" in value) {
-      trimmed.componentInstance = value.componentInstance;
-    }
-    if ("text" in value) trimmed.text = value.text;
-    if ("fills" in value) trimmed.fills = value.fills;
-    if ("fillToken" in value) trimmed.fillToken = value.fillToken;
-    if ("strokes" in value) trimmed.strokes = value.strokes;
-    if ("strokeToken" in value) trimmed.strokeToken = value.strokeToken;
-    if ("strokeWeight" in value) trimmed.strokeWeight = value.strokeWeight;
-    if ("strokeAlign" in value) trimmed.strokeAlign = value.strokeAlign;
-    if ("typography" in value) trimmed.typography = value.typography;
-    if ("typographyToken" in value) trimmed.typographyToken = value.typographyToken;
-    return trimmed;
-  }
-  function trimStructureNode(node) {
     return {
-      id: node.id,
-      parentId: node.parentId,
-      path: node.path,
-      type: node.type,
-      name: node.name,
-      visible: node.visible,
-      styles: node.styles,
-      layout: node.layout,
-      opacity: node.opacity,
-      opacityToken: node.opacityToken,
-      radius: node.radius,
-      radiusToken: node.radiusToken,
-      effects: node.effects,
-      text: node.text,
-      fills: node.fills,
-      fillToken: node.fillToken,
-      strokes: node.strokes,
-      strokeToken: node.strokeToken,
-      strokeWeight: node.strokeWeight,
-      strokeAlign: node.strokeAlign,
-      typography: node.typography,
-      typographyToken: node.typographyToken,
-      componentInstance: node.componentInstance
+      meta: {
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        fileName: figma.root.name,
+        library: figma.root.name
+      },
+      styles: entries
     };
+  }
+  function formatEffectType(type) {
+    return type.toLowerCase().replace("_", " ");
+  }
+  function describeTextStyle(style) {
+    const fontName = style.fontName;
+    const fontLabel = fontName && fontName !== figma.mixed ? `${fontName.family} ${fontName.style}`.trim() : "\u2014";
+    const fontSize = style.fontSize !== figma.mixed && typeof style.fontSize === "number" ? style.fontSize : null;
+    const lineHeight = style.lineHeight !== figma.mixed && style.lineHeight ? formatLineHeight(style.lineHeight) : null;
+    const letterSpacing = style.letterSpacing !== figma.mixed && style.letterSpacing ? formatLetterSpacing(style.letterSpacing) : null;
+    return {
+      fontName: fontLabel === "\u2014" ? null : fontLabel,
+      fontSize,
+      lineHeight,
+      letterSpacing
+    };
+  }
+  function describePaintStyle(style) {
+    const paints = Array.isArray(style.paints) ? style.paints : [];
+    return {
+      paints: paints.map(serializePaintValue).filter(Boolean)
+    };
+  }
+  function serializePaintValue(paint) {
+    if (!paint) return null;
+    if (paint.type === "SOLID") {
+      const color = colorToString(paint.color);
+      const opacity = typeof paint.opacity === "number" ? paint.opacity : void 0;
+      return {
+        type: "solid",
+        color,
+        opacity
+      };
+    }
+    return {
+      type: paint.type.toLowerCase().replace("_", " ")
+    };
+  }
+  function formatLineHeight(lineHeight) {
+    if (lineHeight.unit === "AUTO") return "auto";
+    if (lineHeight.unit === "PIXELS") return formatNumber(lineHeight.value);
+    if (lineHeight.unit === "PERCENT") return formatNumber(lineHeight.value) + "%";
+    return String(lineHeight.value);
+  }
+  function formatLetterSpacing(letterSpacing) {
+    if (letterSpacing.unit === "PIXELS") return formatNumber(letterSpacing.value);
+    if (letterSpacing.unit === "PERCENT") {
+      return formatNumber(letterSpacing.value) + "%";
+    }
+    return String(letterSpacing.value);
+  }
+  function formatNumber(value) {
+    return Number.isFinite(value) ? value.toFixed(2) : String(value);
+  }
+  function colorToString(color) {
+    const r = clampColorComponent3(color.r);
+    const g = clampColorComponent3(color.g);
+    const b = clampColorComponent3(color.b);
+    const alpha = typeof color.a === "number" ? color.a : typeof color.alpha === "number" ? color.alpha : 1;
+    const rgba = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    return "#" + toHex3(r) + toHex3(g) + toHex3(b) + " / " + rgba;
+  }
+  function clampColorComponent3(value) {
+    const normalized = typeof value === "number" ? value : 0;
+    const scaled = Math.round(normalized * 255);
+    return Math.max(0, Math.min(255, scaled));
+  }
+  function toHex3(component) {
+    const hex = component.toString(16).toUpperCase();
+    return hex.length === 1 ? "0" + hex : hex;
+  }
+
+  // src/code.ts
+  console.log("[CODE] plugin loaded");
+  logDebug("plugin-loaded");
+  figma.showUI(__html__, { width: 1280, height: 720 });
+  console.log("[CODE] UI shown");
+  logDebug("ui-shown", { width: 1280, height: 720 });
+  var pagedExport = createPagedExportController(sendExportResult);
+  figma.ui.onmessage = (msg) => {
+    console.log("[CODE] received message from UI:", msg);
+    logDebug("ui-message", msg);
+    if (msg.type === "test") {
+      console.log("[CODE] test message received, sending echo");
+      figma.ui.postMessage({
+        type: "echo",
+        payload: { received: msg }
+      });
+      return;
+    }
+    if (msg.type === "export-components") {
+      console.log("[CODE] starting paged export for document");
+      logDebug("export-components-request");
+      pagedExport.cancel();
+      pagedExport.startFromDocument();
+      return;
+    }
+    if (msg.type === "export-components-current-page") {
+      console.log("[CODE] starting paged export from current page");
+      logDebug("export-current-page-request");
+      pagedExport.cancel();
+      pagedExport.startFromCurrentPage();
+      return;
+    }
+    if (msg.type === "export-components-continue") {
+      console.log("[CODE] continuing paged export");
+      logDebug("export-components-continue-request");
+      pagedExport.continue();
+      return;
+    }
+    if (msg.type === "cancel-export") {
+      console.log("[CODE] cancel paged export");
+      pagedExport.cancel();
+      return;
+    }
+    if (msg.type === "collect-tokens") {
+      console.log("[CODE] collecting tokens");
+      logDebug("collect-tokens-request");
+      collectTokensAndSend();
+      return;
+    }
+    if (msg.type === "collect-styles") {
+      console.log("[CODE] collecting styles");
+      logDebug("collect-styles-request");
+      collectStylesAndSend();
+      return;
+    }
+  };
+  function sendExportResult(scope, data) {
+    const sanitized = sanitizeExportPayload(data);
+    const json = JSON.stringify(sanitized, null, 2);
+    console.log(`[CODE] sending export-result (${scope}). length =`, json.length);
+    logDebug("send-export", {
+      scope,
+      components: data.components.length,
+      meta: data.meta
+    });
+    figma.ui.postMessage({
+      type: "export-result",
+      payload: { json, data: sanitized, mode: "full" }
+    });
+  }
+  async function collectTokensAndSend() {
+    try {
+      const payload = await collectTokensFromFile();
+      const json = JSON.stringify(payload, null, 2);
+      logDebug("collect-tokens-result", {
+        collections: payload.collections.length
+      });
+      figma.ui.postMessage({
+        type: "collect-tokens-result",
+        payload: { json, data: payload }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430";
+      console.error("[CODE] failed to collect tokens", error);
+      logDebug("collect-tokens-error", { error: message });
+      figma.notify(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0442\u043E\u043A\u0435\u043D\u044B: ${message}`, { timeout: 5e3 });
+    }
+  }
+  function collectStylesAndSend() {
+    try {
+      const payload = collectStylesFromDocument();
+      const json = JSON.stringify(payload, null, 2);
+      logDebug("collect-styles-result", {
+        styles: payload.styles.length
+      });
+      figma.ui.postMessage({
+        type: "collect-styles-result",
+        payload: { json, data: payload }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430";
+      console.error("[CODE] failed to collect styles", error);
+      logDebug("collect-styles-error", { error: message });
+      figma.notify(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0441\u0442\u0438\u043B\u0438: ${message}`, { timeout: 5e3 });
+    }
   }
 })();
 //# sourceMappingURL=code.js.map
