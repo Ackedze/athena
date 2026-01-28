@@ -564,20 +564,46 @@
     const collectStructureOptions = { preserveHiddenFills: true };
     let structure = [];
     const variantStructures = {};
-    const firstVariant = set.children.find(
+    const componentVariants = set.children.filter(
       (child) => child.type === "COMPONENT"
     );
-    if (firstVariant) {
-      const firstStructure = collectComponentStructure(
-        firstVariant,
+    const defaultVariantNode = defaultVariant && componentVariants.length > 0 ? componentVariants.find((child) => child.key === defaultVariant) : void 0;
+    let baseVariant = defaultVariantNode != null ? defaultVariantNode : componentVariants[0];
+    if (baseVariant) {
+      let baseStructure = collectComponentStructure(
+        baseVariant,
         collectStructureOptions
       );
-      structure = firstStructure;
-      variantStructures[firstVariant.key] = [];
+      if (!baseStructure.length) {
+        for (const candidate of componentVariants) {
+          if (candidate.id === baseVariant.id) continue;
+          const candidateStructure = collectComponentStructure(
+            candidate,
+            collectStructureOptions
+          );
+          if (candidateStructure.length) {
+            baseVariant = candidate;
+            baseStructure = candidateStructure;
+            break;
+          }
+        }
+      }
+      structure = baseStructure;
+      variantStructures[baseVariant.key] = [];
+      if (baseStructure.length) {
+        console.log("[Athena] defaultVariant base structure ready", {
+          name: set.name,
+          key: set.key,
+          defaultVariant,
+          baseKey: baseVariant.key,
+          baseLength: baseStructure.length,
+          page: normalizedPageName
+        });
+      }
     }
     for (const child of set.children) {
       if (child.type !== "COMPONENT") continue;
-      if (firstVariant && child.id === firstVariant.id) continue;
+      if (baseVariant && child.id === baseVariant.id) continue;
       const variantStructure = collectComponentStructure(
         child,
         collectStructureOptions

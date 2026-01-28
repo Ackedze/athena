@@ -27,22 +27,52 @@ export function describeComponentSet(
   let structure: DSComponent['structure'] = [];
   const variantStructures: Record<string, DSVariantStructurePatch[]> = {};
 
-  // Используем first variant как base snapshot, затем храним per-variant patches.
-  const firstVariant = set.children.find(
+  // Используем defaultVariant как base snapshot (fallback на первый доступный вариант).
+  const componentVariants = set.children.filter(
     (child): child is ComponentNode => child.type === "COMPONENT",
   );
-  if (firstVariant) {
-    const firstStructure = collectComponentStructure(
-      firstVariant,
+  const defaultVariantNode =
+    defaultVariant && componentVariants.length > 0
+      ? componentVariants.find((child) => child.key === defaultVariant)
+      : undefined;
+  let baseVariant = defaultVariantNode ?? componentVariants[0];
+  if (baseVariant) {
+    let baseStructure = collectComponentStructure(
+      baseVariant,
       collectStructureOptions,
     );
-    structure = firstStructure;
-    variantStructures[firstVariant.key] = [];
+    // Если структура пустая — ищем любой вариант с непустой структурой.
+    if (!baseStructure.length) {
+      for (const candidate of componentVariants) {
+        if (candidate.id === baseVariant.id) continue;
+        const candidateStructure = collectComponentStructure(
+          candidate,
+          collectStructureOptions,
+        );
+        if (candidateStructure.length) {
+          baseVariant = candidate;
+          baseStructure = candidateStructure;
+          break;
+        }
+      }
+    }
+    structure = baseStructure;
+    variantStructures[baseVariant.key] = [];
+    if (baseStructure.length) {
+      console.log('[Athena] defaultVariant base structure ready', {
+        name: set.name,
+        key: set.key,
+        defaultVariant,
+        baseKey: baseVariant.key,
+        baseLength: baseStructure.length,
+        page: normalizedPageName,
+      });
+    }
   }
 
   for (const child of set.children) {
     if (child.type !== "COMPONENT") continue;
-    if (firstVariant && child.id === firstVariant.id) continue;
+    if (baseVariant && child.id === baseVariant.id) continue;
     const variantStructure = collectComponentStructure(
       child as ComponentNode,
       collectStructureOptions,

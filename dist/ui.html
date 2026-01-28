@@ -645,6 +645,9 @@
               category: component.category || undefined,
               defaultVariant: component.defaultVariant || undefined,
               variantStructures: component.variantStructures || undefined,
+              structure: Array.isArray(component.structure)
+                ? component.structure
+                : undefined,
               variants: Array.isArray(component.variants)
                 ? component.variants.map(function (variant) {
                     return {
