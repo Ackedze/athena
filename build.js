@@ -1,7 +1,29 @@
-const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
 const isWatch = process.argv.includes('--watch');
+
+function loadEsbuild() {
+  try {
+    return require('esbuild');
+  } catch (error) {
+    const isEsbuildMissing =
+      error &&
+      error.code === 'MODULE_NOT_FOUND' &&
+      typeof error.message === 'string' &&
+      error.message.includes("'esbuild'");
+
+    if (!isEsbuildMissing) {
+      throw error;
+    }
+
+    const workspaceRoot = path.resolve(__dirname, '..');
+    throw new Error(
+      `[Athena] Missing "esbuild". Install shared dependencies once from ${workspaceRoot} with "npm install", or install them just for Athena in ${__dirname}.`,
+    );
+  }
+}
+
+const esbuild = loadEsbuild();
 
 async function buildOnce() {
   // Bundle plugin code и UI в dist для Figma manifest.
