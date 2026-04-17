@@ -21,11 +21,11 @@ type ExportSession = {
 
 type ExportScope = 'current-page' | 'document';
 
-type ExportResultSender = (scope: string, data: DSExport) => void;
+type ExportResultSender = (scope: string, data: DSExport) => void | Promise<void>;
 
 export type PagedExportController = {
-  startFromCurrentPage: () => void;
-  startFromDocument: () => void;
+  startFromCurrentPage: () => Promise<void>;
+  startFromDocument: () => Promise<void>;
   continue: () => void;
   cancel: () => void;
 };
@@ -38,22 +38,22 @@ export function createPagedExportController(
   let sessionCounter = 0;
   let exportCancelToken: { aborted: boolean } | null = null;
 
-  function startFromCurrentPage() {
+  async function startFromCurrentPage() {
     const pages = getPagesStartingFromCurrentPage();
     if (pages.length === 0) {
-      const data = extractComponentsFromCurrentPage();
-      sendExportResult('CURRENT PAGE', data);
+      const data = await extractComponentsFromCurrentPage();
+      await sendExportResult('CURRENT PAGE', data);
       return;
     }
 
     startPagedExport(pages, false, 'current-page');
   }
 
-  function startFromDocument() {
+  async function startFromDocument() {
     const pages = getAllPages();
     if (pages.length === 0) {
-      const data = extractComponentsFromDocument();
-      sendExportResult('ALL', data);
+      const data = await extractComponentsFromDocument();
+      await sendExportResult('ALL', data);
       return;
     }
 
@@ -135,6 +135,7 @@ export function createPagedExportController(
     }
 
     const page = session.pendingPages.shift()!;
+    await page.loadAsync();
     console.log(
       '[CODE] processing page',
       page.name,
@@ -247,10 +248,11 @@ export function createPagedExportController(
 
   function finalizePagedExport() {
     if (!pagedSession) return;
-    notifyPagedErrors(pagedSession.errors);
+    const session = pagedSession;
+    notifyPagedErrors(session.errors);
     logDebug('paged-export-finished', {
-      processedPages: pagedSession.processedPages,
-      errors: pagedSession.errors.length,
+      processedPages: session.processedPages,
+      errors: session.errors.length,
     });
     pagedSession = null;
   }

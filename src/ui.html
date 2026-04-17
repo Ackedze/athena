@@ -12,6 +12,24 @@
         margin: 0 0 12px 0;
         font-size: 16px;
       }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .topbar-main {
+        min-width: 0;
+      }
+      .topbar-main h1 {
+        margin-bottom: 8px;
+      }
+      .topbar-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: flex-start;
+      }
       .controls {
         display: flex;
         gap: 8px;
@@ -141,21 +159,83 @@
         min-height: 240px;
       }
       @media (max-width: 900px) {
+        .topbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .topbar-actions {
+          justify-content: flex-start;
+        }
         .layout {
           grid-template-columns: 1fr;
         }
       }
+      .github-token-dialog {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+      }
+      .github-token-dialog.open {
+        display: flex;
+      }
+      .github-token-modal {
+        background: #fff;
+        border-radius: 8px;
+        padding: 24px;
+        max-width: 400px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+      }
+      .github-token-modal h2 {
+        margin: 0 0 16px 0;
+        font-size: 16px;
+      }
+      .github-token-modal p {
+        margin: 0 0 12px 0;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .github-token-modal input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #b2b2b2;
+        border-radius: 6px;
+        box-sizing: border-box;
+        font-size: 12px;
+        margin-bottom: 16px;
+      }
+      .github-token-modal .button-group {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .github-token-modal button {
+        padding: 8px 16px;
+      }
     </style>
   </head>
   <body>
-    <h1>Athena</h1>
-      <div class="tabs" role="tablist">
+    <div class="topbar">
+      <div class="topbar-main">
+        <h1>Athena</h1>
+        <div class="tabs" role="tablist">
         <button class="tab active" data-tab="components" type="button">
           Компоненты
         </button>
         <button class="tab" data-tab="tokens" type="button">Токены</button>
         <button class="tab" data-tab="styles" type="button">Стили</button>
+        </div>
       </div>
+      <div class="topbar-actions">
+        <button id="publish-btn" type="button">Опубликовать</button>
+      </div>
+    </div>
 
     <section class="tab-panel active" id="components-panel">
       <div class="controls">
@@ -280,6 +360,26 @@
       </div>
     </section>
 
+    <div class="github-token-dialog" id="github-token-dialog">
+      <div class="github-token-modal">
+        <h2>GitHub токен</h2>
+        <p>
+          Для публикации каталогов требуется GitHub Personal Access Token.
+          <a href="https://github.com/settings/tokens" target="_blank">Получить токен</a>
+        </p>
+        <input
+          type="password"
+          id="github-token-input"
+          placeholder="Введите GitHub token"
+          autocomplete="off"
+        />
+        <div class="button-group">
+          <button id="github-token-cancel">Отмена</button>
+          <button id="github-token-save">Сохранить</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       (function () {
         console.log('[UI] inline script loaded');
@@ -287,6 +387,7 @@
         var exportPageBtn = document.getElementById('export-page-btn');
         var output = document.getElementById('output');
         var downloadBtn = document.getElementById('download-btn');
+        var publishBtn = document.getElementById('publish-btn');
         var normalizedOutput = document.getElementById('normalized-output');
         var collectTokensBtn = document.getElementById('collect-tokens-btn');
         var downloadTokensBtn = document.getElementById('download-tokens-btn');
@@ -306,6 +407,7 @@
         var stylesTab = document.getElementById('styles-panel');
         var tokensSummaryLabel = document.getElementById('tokens-summary');
         var stylesSummaryLabel = document.getElementById('styles-summary');
+        var activeTab = 'components';
         var waitingForContinue = false;
         var pagedFiles = null;
         var progressLabel = document.getElementById('progress-label');
@@ -323,6 +425,14 @@
         var lastExportData = null;
         var normalizedJson = '';
         var normalizedApplied = false;
+        var lastCatalogBaseName = '';
+
+        var githubTokenDialog = document.getElementById('github-token-dialog');
+        var githubTokenInput = document.getElementById('github-token-input');
+        var githubTokenSaveBtn = document.getElementById('github-token-save');
+        var githubTokenCancelBtn = document.getElementById('github-token-cancel');
+        var pendingPublishPayload = null;
+        var currentGithubToken = null; // Сохранённый token для текущей сессии
 
         console.log('[UI] elements:', {
           exportPageBtn,
@@ -340,12 +450,24 @@
           triggerDownload();
         });
 
+        bindButton(publishBtn, function () {
+          triggerPublish();
+        });
+
         bindButton(downloadTokensBtn, function () {
           triggerTokenDownload();
         });
 
         bindButton(downloadStylesBtn, function () {
           triggerStyleDownload();
+        });
+
+        bindButton(githubTokenSaveBtn, function () {
+          saveGithubToken();
+        });
+
+        bindButton(githubTokenCancelBtn, function () {
+          closeGithubTokenDialog();
         });
 
         bindButton(collectTokensBtn, function () {
@@ -434,9 +556,22 @@
             stylesCollected = true;
             renderStyles(styleEntries, true);
           }
+          if (msg.type === 'publish-require-token') {
+            console.log('[UI] github token required');
+            openGithubTokenDialog(msg.payload);
+          }
+          if (msg.type === 'publish-result') {
+            console.log('[UI] publish result:', msg.payload);
+            if (!msg.payload || !msg.payload.success) {
+              // При ошибке очищаем token, чтобы пользователь мог попробовать другой
+              currentGithubToken = null;
+              console.log('[UI] cleared github token due to error');
+            }
+          }
         };
 
         function updateTabState(target) {
+          activeTab = target;
           tabs.forEach(function (tab) {
             if (tab.getAttribute('data-tab') === target) {
               tab.classList.add('active');
@@ -491,6 +626,13 @@
               : 0;
           pagedFiles.push({
             name: pageName,
+            fileName: resolveCatalogBaseName({
+              library:
+                (payload.data && payload.data.meta && payload.data.meta.library) ||
+                (payload.data && payload.data.meta && payload.data.meta.fileName) ||
+                'library',
+              fileName: pageName,
+            }),
             json: payload.json,
             data: payload.data,
             components:
@@ -513,6 +655,7 @@
           }
           normalizedJson = '';
           normalizedApplied = false;
+          lastCatalogBaseName = '';
           renderSummary(null, []);
           if (componentTableBody) {
             componentTableBody.innerHTML =
@@ -541,27 +684,27 @@
         }
 
         function renderExportResult(payload) {
+          console.log('[UI] renderExportResult called', { mode: payload?.mode, componentsCount: payload?.data?.components?.length });
           window.__lastExportPayload = payload;
           lastExportData = payload && payload.data ? payload.data : null;
           normalizeCatalogOutput(payload.data || null);
+          
           if (payload && payload.mode === 'paged') {
+            console.log('[UI] paged result, remembering file');
             rememberPagedFile(payload);
           } else {
             pagedFiles = null;
             window.__pagedFiles = pagedFiles;
             updateProgressLabel(null);
           }
+          
           if (output) {
-            if (payload && payload.mode === 'paged') {
-              output.value = payload.json;
-              console.log('[UI] textarea updated with paged JSON');
-            } else {
-              output.value = payload.json;
-              console.log(
-                '[UI] textarea updated, length =',
-                payload.json.length,
-              );
-            }
+            output.value = payload.json;
+            console.log(
+              '[UI] textarea updated, mode=' + (payload?.mode || 'unknown'),
+              'length =',
+              payload.json.length,
+            );
             lastTextareaContent = output.value;
           }
 
@@ -582,11 +725,16 @@
                 payload.data.meta.fileName) ||
               'library';
             lastDownloadMeta = { library: libraryLabel, fileName: pageLabel };
+            lastCatalogBaseName = resolveCatalogBaseName(lastDownloadMeta, pageLabel);
           } else if (payload && payload.data) {
             lastDownloadMeta = {
               library: payload.data.meta?.library,
               fileName: payload.data.meta?.fileName,
             };
+            lastCatalogBaseName = resolveCatalogBaseName(
+              lastDownloadMeta,
+              payload.data.meta?.fileName || 'export',
+            );
           }
 
           var exportData = payload.data || {};
@@ -594,6 +742,7 @@
             ? exportData.components
             : [];
 
+          console.log('[UI] rendering summary and components', { componentsCount: components.length });
           renderSummary(exportData, components);
           renderComponents(components);
         }
@@ -1442,42 +1591,25 @@
             console.warn('[UI] nothing to download yet');
             return;
           }
-          downloadEntry(
-            content,
-            lastDownloadMeta,
-            lastDownloadMeta && lastDownloadMeta.fileName
-              ? lastDownloadMeta.fileName
-              : 'export',
-            );
+          var baseName = getCurrentCatalogBaseName();
+          downloadEntry(content, baseName);
         }
         function triggerStyleDownload() {
           if (!lastStylesJson) {
             console.warn('[UI] no styles to download yet');
             return;
           }
-          downloadEntry(
-            lastStylesJson,
-            lastStylesMeta,
-            lastStylesMeta && lastStylesMeta.fileName
-              ? lastStylesMeta.fileName
-              : 'styles',
-          );
+          downloadEntry(lastStylesJson, getStylesExportBaseName());
         }
         function triggerTokenDownload() {
           if (!lastTokensJson) {
             console.warn('[UI] no tokens to download yet');
             return;
           }
-          downloadEntry(
-            lastTokensJson,
-            lastTokensMeta,
-            lastTokensMeta && lastTokensMeta.fileName
-              ? lastTokensMeta.fileName
-              : 'tokens',
-          );
+          downloadEntry(lastTokensJson, getTokensExportBaseName());
         }
-        function downloadEntry(json, meta, fallbackName) {
-          var safeName = resolveFileName(meta, fallbackName);
+        function downloadEntry(json, baseName) {
+          var safeName = sanitizeFileName(baseName || 'export');
           var blob = new Blob([json], { type: 'application/json' });
           var url = URL.createObjectURL(blob);
 
@@ -1490,7 +1622,7 @@
           URL.revokeObjectURL(url);
         }
 
-        function resolveFileName(meta, fallback) {
+        function resolveCatalogBaseName(meta, fallback) {
           var library = (meta && meta.library) || 'library';
           var page = fallback;
           if (!page) {
@@ -1509,6 +1641,70 @@
             candidate = normalizedLibrary + ' -- ' + normalizedPage;
           }
           return sanitizeFileName(candidate);
+        }
+
+        function getCurrentCatalogBaseName() {
+          if (lastCatalogBaseName) {
+            return lastCatalogBaseName;
+          }
+          return resolveCatalogBaseName(
+            lastDownloadMeta,
+            lastDownloadMeta && lastDownloadMeta.fileName
+              ? lastDownloadMeta.fileName
+              : 'export',
+          );
+        }
+
+        function getTokensExportBaseName() {
+          return resolveScopedExportBaseName(lastTokensMeta, 'tokens');
+        }
+
+        function getStylesExportBaseName() {
+          return resolveScopedExportBaseName(lastStylesMeta, 'styles');
+        }
+
+        function resolveScopedExportBaseName(meta, scopeLabel) {
+          return resolveCatalogBaseName(
+            {
+              library: meta && meta.library ? meta.library : 'library',
+              fileName: scopeLabel,
+            },
+            scopeLabel,
+          );
+        }
+
+        function getPublishPayload() {
+          if (activeTab === 'tokens') {
+            if (!lastTokensJson) {
+              return { error: 'Сначала соберите токены' };
+            }
+            return {
+              json: lastTokensJson,
+              meta: lastTokensMeta,
+              fileName: getTokensExportBaseName() + '.json',
+            };
+          }
+
+          if (activeTab === 'styles') {
+            if (!lastStylesJson) {
+              return { error: 'Сначала соберите стили' };
+            }
+            return {
+              json: lastStylesJson,
+              meta: lastStylesMeta,
+              fileName: getStylesExportBaseName() + '.json',
+            };
+          }
+
+          var content = normalizedApplied ? normalizedJson : lastTextareaContent;
+          if (!content) {
+            return { error: 'Сначала соберите компоненты' };
+          }
+          return {
+            json: content,
+            meta: lastDownloadMeta,
+            fileName: getCurrentCatalogBaseName() + '.json',
+          };
         }
 
         function normalizeName(rawName) {
@@ -1562,6 +1758,92 @@
           var minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
           var seconds = String(totalSeconds % 60).padStart(2, '0');
           timerDisplay.textContent = minutes + ':' + seconds;
+        }
+
+        function openGithubTokenDialog(payload) {
+          pendingPublishPayload = payload;
+          if (githubTokenDialog) {
+            githubTokenDialog.classList.add('open');
+            if (githubTokenInput) {
+              githubTokenInput.focus();
+              githubTokenInput.value = '';
+            }
+          }
+        }
+
+        function closeGithubTokenDialog() {
+          pendingPublishPayload = null;
+          if (githubTokenDialog) {
+            githubTokenDialog.classList.remove('open');
+          }
+        }
+
+        function saveGithubToken() {
+          if (!githubTokenInput) return;
+          var token = githubTokenInput.value.trim();
+          if (!token) {
+            alert('Пожалуйста, введите token');
+            return;
+          }
+          // Сохраняем token в переменную сессии
+          currentGithubToken = token;
+          console.log('[UI] GitHub token saved to session');
+          closeGithubTokenDialog();
+          // Отправляем токен и payload вместе в code.ts
+          if (pendingPublishPayload) {
+            var payload = pendingPublishPayload;
+            pendingPublishPayload = null;
+            console.log('[UI] publishing with token');
+            parent.postMessage(
+              {
+                pluginMessage: {
+                  type: 'publish-with-token',
+                  token: token,
+                  payload: payload,
+                },
+              },
+              '*',
+            );
+          }
+        }
+
+        function triggerPublish() {
+          var publishPayload = getPublishPayload();
+          if (!publishPayload || !publishPayload.json || !publishPayload.fileName) {
+            console.warn('[UI] nothing to publish yet', { activeTab: activeTab });
+            alert((publishPayload && publishPayload.error) || 'Нет данных для публикации');
+            return;
+          }
+          var catalogName = publishPayload.fileName;
+          console.log('[UI] publishing catalog:', catalogName);
+          
+          // Если у нас уже есть token, используем его сразу
+          if (currentGithubToken) {
+            console.log('[UI] using saved token from session');
+            var payload = {
+              json: publishPayload.json,
+              catalogName: catalogName,
+              meta: publishPayload.meta,
+            };
+            parent.postMessage(
+              {
+                pluginMessage: {
+                  type: 'publish-with-token',
+                  token: currentGithubToken,
+                  payload: payload,
+                },
+              },
+              '*',
+            );
+            return;
+          }
+          
+          // Иначе показываем диалог ввода token
+          openGithubTokenDialog({
+            json: publishPayload.json,
+            catalogName: catalogName,
+            meta: publishPayload.meta,
+          });
         }
       })();
     </script>

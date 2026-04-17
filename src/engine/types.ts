@@ -60,7 +60,7 @@ export interface DSTypography {
 }
 
 export interface DSInstanceInfo {
-  componentKey: string;
+  componentKey?: string | null;
   variantProperties?: Record<string, string>;
 }
 

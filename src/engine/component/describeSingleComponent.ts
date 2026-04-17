@@ -4,11 +4,11 @@ import { collectComponentStructure } from "./collectStructure";
 import { classifyComponentMeta } from "../../lib/componentMetaClassifier";
 import { getSectionName } from "./utils/getSectionName";
 
-export function describeSingleComponent(
+export async function describeSingleComponent(
   comp: ComponentNode,
   pageName: string,
   libraryName?: string | null,
-): DSComponent {
+): Promise<DSComponent> {
   const normalizedPageName = normalizePageName(pageName);
   const sectionName = getSectionName(comp);
   const classification = classifyComponentMeta({
@@ -17,7 +17,7 @@ export function describeSingleComponent(
     sectionName,
     libraryName,
   });
-  const structure = collectComponentStructure(comp, {
+  const structure = await collectComponentStructure(comp, {
     preserveHiddenFills: true,
   });
 

@@ -5,11 +5,11 @@ import { extractVariantList } from "./variantParser";
 import { classifyComponentMeta } from "../../lib/componentMetaClassifier";
 import { getSectionName } from "./utils/getSectionName";
 
-export function describeComponentSet(
+export async function describeComponentSet(
   set: ComponentSetNode,
   pageName: string,
   libraryName?: string | null,
-): DSComponent {
+): Promise<DSComponent> {
   const normalizedPageName = normalizePageName(pageName);
   const variants = extractVariantList(set);
   const defaultVariant = variants.length > 0 ? variants[0].key : undefined;
@@ -37,7 +37,7 @@ export function describeComponentSet(
       : undefined;
   let baseVariant = defaultVariantNode ?? componentVariants[0];
   if (baseVariant) {
-    let baseStructure = collectComponentStructure(
+    let baseStructure = await collectComponentStructure(
       baseVariant,
       collectStructureOptions,
     );
@@ -45,7 +45,7 @@ export function describeComponentSet(
     if (!baseStructure.length) {
       for (const candidate of componentVariants) {
         if (candidate.id === baseVariant.id) continue;
-        const candidateStructure = collectComponentStructure(
+        const candidateStructure = await collectComponentStructure(
           candidate,
           collectStructureOptions,
         );
@@ -73,7 +73,7 @@ export function describeComponentSet(
   for (const child of set.children) {
     if (child.type !== "COMPONENT") continue;
     if (baseVariant && child.id === baseVariant.id) continue;
-    const variantStructure = collectComponentStructure(
+    const variantStructure = await collectComponentStructure(
       child as ComponentNode,
       collectStructureOptions,
     );

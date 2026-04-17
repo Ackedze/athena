@@ -40,11 +40,13 @@ export interface StyleExportPayload {
   styles: StyleEntry[];
 }
 
-export function collectStylesFromDocument(): StyleExportPayload {
+export async function collectStylesFromDocument(): Promise<StyleExportPayload> {
   // Собираем стили и нормализуем имена для группировки в UI.
-  const effectStyles = figma.getLocalEffectStyles();
-  const textStyles = figma.getLocalTextStyles();
-  const paintStyles = figma.getLocalPaintStyles();
+  const [effectStyles, textStyles, paintStyles] = await Promise.all([
+    figma.getLocalEffectStylesAsync(),
+    figma.getLocalTextStylesAsync(),
+    figma.getLocalPaintStylesAsync(),
+  ]);
   const entries: StyleEntry[] = [];
   for (const style of effectStyles) {
     const nameParts = splitVariableName(style.name);

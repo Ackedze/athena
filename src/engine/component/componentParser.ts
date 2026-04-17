@@ -12,7 +12,8 @@ import { describeSingleComponent } from './describeSingleComponent';
 import { resetStructureCache } from './collectStructure';
 import { logDebug } from '../../debug';
 
-export function extractComponentsFromDocument(): DSExport {
+export async function extractComponentsFromDocument(): Promise<DSExport> {
+  await figma.loadAllPagesAsync();
   const pages: PageNode[] = [];
   for (const child of figma.root.children) {
     if (child.type === 'PAGE') {
@@ -21,7 +22,7 @@ export function extractComponentsFromDocument(): DSExport {
   }
 
   const { components, pagesWithComponents, errors } =
-    collectComponentsFromPages(pages);
+    await collectComponentsFromPages(pages);
   notifyOnErrors(errors);
 
   const meta: DSMeta = {
@@ -44,10 +45,11 @@ export function extractComponentsFromDocument(): DSExport {
 }
 
 // 🔹 Новый экспорт — только по текущей странице
-export function extractComponentsFromCurrentPage(): DSExport {
+export async function extractComponentsFromCurrentPage(): Promise<DSExport> {
   const current = figma.currentPage; // всегда PageNode
+  await current.loadAsync();
   const { components, errors, pageHasComponents } =
-    collectComponentsFromPage(current);
+    await collectComponentsFromPage(current);
   notifyOnErrors(errors);
 
   const meta: DSMeta = {
@@ -89,16 +91,17 @@ function notifyOnErrors(errors: string[]) {
   );
 }
 
-export function collectComponentsFromPage(
+export async function collectComponentsFromPage(
   page: PageNode,
-): {
+): Promise<{
   components: DSComponent[];
   errors: string[];
   pageHasComponents: boolean;
-} {
+}> {
   resetStructureCache();
   logDebug('collect-page-start', { page: page.name });
-  const result = collectComponentsFromPageInternal(page);
+  await page.loadAsync();
+  const result = await collectComponentsFromPageInternal(page);
   assignDepthMetrics(result.components);
   logDebug('collect-page-finish', {
     page: page.name,
@@ -108,11 +111,11 @@ export function collectComponentsFromPage(
   return result;
 }
 
-function collectComponentsFromPages(pages: PageNode[]): {
+async function collectComponentsFromPages(pages: PageNode[]): Promise<{
   components: DSComponent[];
   pagesWithComponents: string[];
   errors: string[];
-} {
+}> {
   resetStructureCache();
   logDebug('collect-pages-start', {
     pageNames: pages.map((p) => p.name),
@@ -122,7 +125,8 @@ function collectComponentsFromPages(pages: PageNode[]): {
   const errors: string[] = [];
 
   for (const page of pages) {
-    const pageResult = collectComponentsFromPageInternal(page);
+    await page.loadAsync();
+    const pageResult = await collectComponentsFromPageInternal(page);
     components.push(...pageResult.components);
     errors.push(...pageResult.errors);
     if (pageResult.pageHasComponents) {
@@ -235,11 +239,11 @@ function processDepthNodes(
   }
 }
 
-function collectComponentsFromPageInternal(page: PageNode): {
+async function collectComponentsFromPageInternal(page: PageNode): Promise<{
   components: DSComponent[];
   errors: string[];
   pageHasComponents: boolean;
-} {
+}> {
   // Depth-first traversal: собираем component sets и standalone components.
   const components: DSComponent[] = [];
   const errors: string[] = [];
@@ -257,7 +261,7 @@ function collectComponentsFromPageInternal(page: PageNode): {
       });
       try {
         components.push(
-          describeComponentSet(node, normalizePageName(page.name), figma.root.name),
+          await describeComponentSet(node, normalizePageName(page.name), figma.root.name),
         );
       } catch (error) {
         const message = buildErrorMessage(page.name, node.name, error);
@@ -277,7 +281,7 @@ function collectComponentsFromPageInternal(page: PageNode): {
       if (!node.parent || node.parent.type !== 'COMPONENT_SET') {
         try {
           components.push(
-            describeSingleComponent(node, normalizePageName(page.name), figma.root.name),
+            await describeSingleComponent(node, normalizePageName(page.name), figma.root.name),
           );
         } catch (error) {
           const message = buildErrorMessage(page.name, node.name, error);
@@ -344,7 +348,7 @@ export async function collectComponentsFromPageChunked(
       });
       try {
       components.push(
-        describeComponentSet(node, normalizePageName(page.name), figma.root.name),
+        await describeComponentSet(node, normalizePageName(page.name), figma.root.name),
       );
       } catch (error) {
         const message = buildErrorMessage(page.name, node.name, error);
@@ -364,7 +368,7 @@ export async function collectComponentsFromPageChunked(
       if (!node.parent || node.parent.type !== 'COMPONENT_SET') {
         try {
           components.push(
-            describeSingleComponent(node, normalizePageName(page.name), figma.root.name),
+            await describeSingleComponent(node, normalizePageName(page.name), figma.root.name),
           );
         } catch (error) {
           const message = buildErrorMessage(page.name, node.name, error);

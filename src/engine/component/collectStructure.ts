@@ -6,41 +6,45 @@ interface CollectStructureOptions {
 }
 
 // Cache per root node + options, чтобы не пересобирать структуры между variants.
-const structureCache = new Map<string, DSStructureNode[]>();
+const structureCache = new Map<string, Promise<DSStructureNode[]>>();
 
 export function resetStructureCache() {
   structureCache.clear();
 }
 
-export function collectComponentStructure(
+export async function collectComponentStructure(
   root: SceneNode,
   options?: CollectStructureOptions,
-): DSStructureNode[] {
+): Promise<DSStructureNode[]> {
   const resolvedOptions = {
     preserveHiddenFills: options?.preserveHiddenFills ?? true,
   };
   const cacheKey = `${root.id}:${resolvedOptions.preserveHiddenFills ? "1" : "0"}`;
   const cached = structureCache.get(cacheKey);
   if (cached) {
-    return cached;
+    return await cached;
   }
 
-  const list: DSStructureNode[] = [];
-  let nextId = 1;
+  const structurePromise = (async () => {
+    const list: DSStructureNode[] = [];
+    let nextId = 1;
 
-  function walk(node: SceneNode, parentPath: string, parentId: number | null) {
-    const id = nextId++;
-    const snap = snapshotNode(node, parentPath, parentId, id, resolvedOptions);
-    list.push(snap);
+    async function walk(node: SceneNode, parentPath: string, parentId: number | null) {
+      const id = nextId++;
+      const snap = await snapshotNode(node, parentPath, parentId, id, resolvedOptions);
+      list.push(snap);
 
-    if ("children" in node) {
-      for (const child of node.children as SceneNode[]) {
-        walk(child, snap.path, id);
+      if ("children" in node) {
+        for (const child of node.children as SceneNode[]) {
+          await walk(child, snap.path, id);
+        }
       }
     }
-  }
 
-  walk(root, "", null);
-  structureCache.set(cacheKey, list);
-  return list;
+    await walk(root, "", null);
+    return list;
+  })();
+
+  structureCache.set(cacheKey, structurePromise);
+  return await structurePromise;
 }

@@ -35,7 +35,7 @@ figma.ui.onmessage = (msg) => {
     console.log('[CODE] starting paged export for document');
     logDebug('export-components-request');
     pagedExport.cancel();
-    pagedExport.startFromDocument();
+    void pagedExport.startFromDocument();
     return;
   }
 
@@ -43,7 +43,7 @@ figma.ui.onmessage = (msg) => {
     console.log('[CODE] starting paged export from current page');
     logDebug('export-current-page-request');
     pagedExport.cancel();
-    pagedExport.startFromCurrentPage();
+    void pagedExport.startFromCurrentPage();
     return;
   }
 
@@ -70,6 +70,32 @@ figma.ui.onmessage = (msg) => {
     console.log('[CODE] collecting styles');
     logDebug('collect-styles-request');
     collectStylesAndSend();
+    return;
+  }
+
+  if (msg.type === 'publish-catalog') {
+    console.log('[CODE] publishing catalog');
+    logDebug('publish-catalog-request', { catalogName: msg.payload?.catalogName });
+    void publishCatalog(msg.payload);
+    return;
+  }
+
+  if (msg.type === 'set-github-token') {
+    console.log('[CODE] setting github token');
+    void figma.clientStorage.setAsync('github-token', msg.token);
+    logDebug('set-github-token');
+    return;
+  }
+
+  if (msg.type === 'publish-with-token') {
+    console.log('[CODE] publishing catalog with token from UI');
+    const token = msg.token;
+    const payload = msg.payload;
+    if (!token || !payload) {
+      console.error('[CODE] missing token or payload');
+      return;
+    }
+    void publishWithToken(payload, token);
     return;
   }
 };
@@ -109,9 +135,9 @@ async function collectTokensAndSend() {
   }
 }
 
-function collectStylesAndSend() {
+async function collectStylesAndSend() {
   try {
-    const payload = collectStylesFromDocument();
+    const payload = await collectStylesFromDocument();
     const json = JSON.stringify(payload, null, 2);
     logDebug('collect-styles-result', {
       styles: payload.styles.length,
@@ -126,5 +152,188 @@ function collectStylesAndSend() {
     console.error('[CODE] failed to collect styles', error);
     logDebug('collect-styles-error', { error: message });
     figma.notify(`Не удалось собрать стили: ${message}`, { timeout: 5000 });
+  }
+}
+
+interface PublishPayload {
+  json: string;
+  catalogName: string;
+  meta?: Record<string, any>;
+}
+
+// Helper функция для кодирования строки в base64
+function stringToBase64(str: string): string {
+  try {
+    // Попытаемся использовать btoa если он доступен (в браузере)
+    if (typeof btoa !== 'undefined') {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+  } catch (err) {
+    // btoa недоступен, используем ручное кодирование
+  }
+
+  // Node.js / Figma runtime способ кодирования
+  const chars =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  let result = '';
+  let i = 0;
+
+  while (i < str.length) {
+    const a = str.charCodeAt(i++);
+    const b = i < str.length ? str.charCodeAt(i++) : 0;
+    const c = i < str.length ? str.charCodeAt(i++) : 0;
+
+    const bitmap = (a << 16) | (b << 8) | c;
+
+    result += chars.charAt((bitmap >> 18) & 63);
+    result += chars.charAt((bitmap >> 12) & 63);
+    result += i - 2 < str.length ? chars.charAt((bitmap >> 6) & 63) : '=';
+    result += i - 1 < str.length ? chars.charAt(bitmap & 63) : '=';
+  }
+
+  return result;
+}
+
+async function publishCatalog(payload: PublishPayload) {
+  try {
+    if (!payload || !payload.json || !payload.catalogName) {
+      throw new Error('Invalid publish payload');
+    }
+
+    // Всегда просим ввести token при публикации
+    console.log('[CODE] requesting github token from UI');
+    logDebug('publish-catalog-request-token');
+    figma.ui.postMessage({
+      type: 'publish-require-token',
+      payload: payload,
+    });
+    return;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Неизвестная ошибка';
+    console.error('[CODE] failed to publish catalog', error);
+    logDebug('publish-catalog-error', { error: message });
+    figma.notify(`Не удалось опубликовать каталог: ${message}`, {
+      timeout: 5000,
+    });
+    figma.ui.postMessage({
+      type: 'publish-result',
+      payload: {
+        success: false,
+        error: message,
+      },
+    });
+  }
+}
+
+async function publishWithToken(payload: PublishPayload, githubToken: string) {
+  try {
+    if (!payload || !payload.json || !payload.catalogName) {
+      throw new Error('Invalid publish payload');
+    }
+
+    if (!githubToken) {
+      throw new Error('GitHub token is required');
+    }
+
+    const catalogName = payload.catalogName.replace(/\.json$/, '');
+    const repo = 'ackedze/design-system_ab';
+    const owner = 'ackedze';
+    const repoName = 'design-system_ab';
+    const filePath = `catalogs/${catalogName}.json`;
+    const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}`;
+
+    console.log('[CODE] publishing to GitHub:', { apiUrl, catalogName });
+
+    // Кодируем содержимое в base64
+    const encodedContent = stringToBase64(payload.json);
+
+    // Получаем текущий SHA файла (если он существует)
+    let sha = undefined;
+    try {
+      const getResponse = await fetch(apiUrl, {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      if (getResponse.status === 401) {
+        console.error('[CODE] authentication failed');
+        throw new Error('Ошибка аутентификации. GitHub token может быть неправильным, истёкшим или с недостаточными правами. Получите новый token на https://github.com/settings/tokens с scope "repo"');
+      }
+      if (getResponse.ok) {
+        const fileData = await getResponse.json();
+        sha = fileData.sha;
+        console.log('[CODE] existing file found, sha:', sha);
+      }
+    } catch (err) {
+      console.log('[CODE] file does not exist yet, creating new');
+    }
+
+    // Отправляем PUT запрос для создания/обновления файла
+    const requestBody: any = {
+      message: `Publish design system catalog: ${catalogName}`,
+      content: encodedContent,
+    };
+    if (sha) {
+      requestBody.sha = sha;
+    }
+
+    const putResponse = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!putResponse.ok) {
+      const errorData = await putResponse.json();
+      let errorMessage = errorData.message || putResponse.statusText;
+      
+      // Улучшеные сообщения об ошибках
+      if (putResponse.status === 401) {
+        errorMessage = 'Ошибка аутентификации. GitHub token может быть неправильным, истёкшим или с недостаточными правами. Получите новый token на https://github.com/settings/tokens с scope "repo"';
+      } else if (putResponse.status === 403) {
+        errorMessage = 'Доступ запрещён. Проверьте, что у вас есть доступ к репозиторию ackedze/design-system_ab';
+      }
+      
+      throw new Error(`GitHub API error: ${errorMessage}`);
+    }
+
+    const result = await putResponse.json();
+    console.log('[CODE] catalog published successfully:', result);
+    logDebug('publish-catalog-success', { catalogName, url: result.html_url });
+
+    figma.notify(
+      `✓ Каталог "${catalogName}" опубликован в ${repo}`,
+      { timeout: 5000 },
+    );
+
+    figma.ui.postMessage({
+      type: 'publish-result',
+      payload: {
+        success: true,
+        catalogName,
+        url: result.html_url,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Неизвестная ошибка';
+    console.error('[CODE] failed to publish catalog', error);
+    logDebug('publish-catalog-error', { error: message });
+    figma.notify(`Не удалось опубликовать каталог: ${message}`, {
+      timeout: 5000,
+    });
+    figma.ui.postMessage({
+      type: 'publish-result',
+      payload: {
+        success: false,
+        error: message,
+      },
+    });
   }
 }

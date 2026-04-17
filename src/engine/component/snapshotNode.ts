@@ -17,7 +17,17 @@ export function snapshotNode(
   parentId: number | null,
   id: number,
   options?: SnapshotOptions,
-): DSStructureNode {
+): Promise<DSStructureNode> {
+  return snapshotNodeAsync(node, parentPath, parentId, id, options);
+}
+
+async function snapshotNodeAsync(
+  node: SceneNode,
+  parentPath: string,
+  parentId: number | null,
+  id: number,
+  options?: SnapshotOptions,
+): Promise<DSStructureNode> {
   // Делаем snapshot structural и visual properties для export.
   const path = makePath(parentPath, node.name);
 
@@ -59,11 +69,11 @@ export function snapshotNode(
     extractPaintVariableId(rawFills) ||
     getBoundVariableId(bound, "fills") ||
     getBoundVariableId(bound, "fill") ||
-    extractPaintVariableIdFromStyle(node, "fillStyleId") ||
+    (await extractPaintVariableIdFromStyle(node, "fillStyleId")) ||
     null;
   const textStyleFillToken =
     !fillToken && node.type === "TEXT"
-      ? extractPaintVariableIdFromTextStyle(node as TextNode)
+      ? await extractPaintVariableIdFromTextStyle(node as TextNode)
       : null;
   const resolvedFillToken = fillToken || textStyleFillToken;
   const shouldCaptureFills = snapshotOptions.preserveHiddenFills || node.visible;
@@ -82,7 +92,7 @@ export function snapshotNode(
     extractPaintVariableId(rawStrokes) ||
     getBoundVariableId(bound, "strokes") ||
     getBoundVariableId(bound, "stroke") ||
-    extractPaintVariableIdFromStyle(node, "strokeStyleId") ||
+    (await extractPaintVariableIdFromStyle(node, "strokeStyleId")) ||
     null;
   const strokes = extractPaints(rawStrokes, { tokenKey: strokeToken });
   const strokeWeight =
@@ -208,15 +218,15 @@ function extractPaintVariableId(
   return null;
 }
 
-function extractPaintVariableIdFromStyle(
+async function extractPaintVariableIdFromStyle(
   node: SceneNode,
   styleKey: "fillStyleId" | "strokeStyleId",
-): string | null {
+): Promise<string | null> {
   const styleId = (node as any)[styleKey];
   if (!styleId || styleId === figma.mixed || typeof styleId !== "string") {
     return null;
   }
-  const style = figma.getStyleById(styleId) as PaintStyle | null;
+  const style = (await figma.getStyleByIdAsync(styleId)) as PaintStyle | null;
   if (!style) return null;
   const boundToken = extractVariableIdFromStyleBoundVariables(style);
   if (boundToken) return boundToken;
@@ -224,12 +234,14 @@ function extractPaintVariableIdFromStyle(
   return extractPaintVariableId((style as PaintStyle).paints);
 }
 
-function extractPaintVariableIdFromTextStyle(node: TextNode): string | null {
+async function extractPaintVariableIdFromTextStyle(
+  node: TextNode,
+): Promise<string | null> {
   const styleId = node.textStyleId;
   if (!styleId || styleId === figma.mixed || typeof styleId !== "string") {
     return null;
   }
-  const style = figma.getStyleById(styleId) as TextStyle | null;
+  const style = (await figma.getStyleByIdAsync(styleId)) as TextStyle | null;
   if (!style) return null;
   const boundToken = extractVariableIdFromStyleBoundVariables(style);
   if (boundToken) return boundToken;
