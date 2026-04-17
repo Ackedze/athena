@@ -73,20 +73,6 @@ figma.ui.onmessage = (msg) => {
     return;
   }
 
-  if (msg.type === 'publish-catalog') {
-    console.log('[CODE] publishing catalog');
-    logDebug('publish-catalog-request', { catalogName: msg.payload?.catalogName });
-    void publishCatalog(msg.payload);
-    return;
-  }
-
-  if (msg.type === 'set-github-token') {
-    console.log('[CODE] setting github token');
-    void figma.clientStorage.setAsync('github-token', msg.token);
-    logDebug('set-github-token');
-    return;
-  }
-
   if (msg.type === 'publish-with-token') {
     console.log('[CODE] publishing catalog with token from UI');
     const token = msg.token;
@@ -158,21 +144,19 @@ async function collectStylesAndSend() {
 interface PublishPayload {
   json: string;
   catalogName: string;
-  meta?: Record<string, any>;
+  meta?: Record<string, unknown>;
 }
 
-// Helper функция для кодирования строки в base64
 function stringToBase64(str: string): string {
   try {
-    // Попытаемся использовать btoa если он доступен (в браузере)
     if (typeof btoa !== 'undefined') {
       return btoa(unescape(encodeURIComponent(str)));
     }
-  } catch (err) {
-    // btoa недоступен, используем ручное кодирование
+  } catch (error) {
+    void error;
+    // Fall back to manual encoding below.
   }
 
-  // Node.js / Figma runtime способ кодирования
   const chars =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
   let result = '';
@@ -194,36 +178,42 @@ function stringToBase64(str: string): string {
   return result;
 }
 
-async function publishCatalog(payload: PublishPayload) {
-  try {
-    if (!payload || !payload.json || !payload.catalogName) {
-      throw new Error('Invalid publish payload');
-    }
+function buildGitHubAuthError(): string {
+  return 'Ошибка аутентификации. GitHub token может быть неправильным, истёкшим или с недостаточными правами. Получите новый token на https://github.com/settings/tokens с scope "repo"';
+}
 
-    // Всегда просим ввести token при публикации
-    console.log('[CODE] requesting github token from UI');
-    logDebug('publish-catalog-request-token');
-    figma.ui.postMessage({
-      type: 'publish-require-token',
-      payload: payload,
-    });
-    return;
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Неизвестная ошибка';
-    console.error('[CODE] failed to publish catalog', error);
-    logDebug('publish-catalog-error', { error: message });
-    figma.notify(`Не удалось опубликовать каталог: ${message}`, {
-      timeout: 5000,
-    });
-    figma.ui.postMessage({
-      type: 'publish-result',
-      payload: {
-        success: false,
-        error: message,
-      },
-    });
+function buildGitHubAccessError(): string {
+  return 'Доступ запрещён. Проверьте, что у вас есть доступ к репозиторию ackedze/design-system_ab';
+}
+
+async function getExistingFileSha(
+  apiUrl: string,
+  githubToken: string,
+): Promise<string | undefined> {
+  const response = await fetch(apiUrl, {
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (response.status === 404) {
+    return undefined;
   }
+  if (response.status === 401) {
+    throw new Error(buildGitHubAuthError());
+  }
+  if (response.status === 403) {
+    throw new Error(buildGitHubAccessError());
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Не удалось проверить существующий файл в GitHub: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const fileData = (await response.json()) as { sha?: string };
+  return fileData.sha;
 }
 
 async function publishWithToken(payload: PublishPayload, githubToken: string) {
@@ -245,32 +235,14 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
 
     console.log('[CODE] publishing to GitHub:', { apiUrl, catalogName });
 
-    // Кодируем содержимое в base64
     const encodedContent = stringToBase64(payload.json);
-
-    // Получаем текущий SHA файла (если он существует)
-    let sha = undefined;
-    try {
-      const getResponse = await fetch(apiUrl, {
-        headers: {
-          Authorization: `token ${githubToken}`,
-          Accept: 'application/vnd.github.v3+json',
-        },
-      });
-      if (getResponse.status === 401) {
-        console.error('[CODE] authentication failed');
-        throw new Error('Ошибка аутентификации. GitHub token может быть неправильным, истёкшим или с недостаточными правами. Получите новый token на https://github.com/settings/tokens с scope "repo"');
-      }
-      if (getResponse.ok) {
-        const fileData = await getResponse.json();
-        sha = fileData.sha;
-        console.log('[CODE] existing file found, sha:', sha);
-      }
-    } catch (err) {
+    const sha = await getExistingFileSha(apiUrl, githubToken);
+    if (sha) {
+      console.log('[CODE] existing file found, sha:', sha);
+    } else {
       console.log('[CODE] file does not exist yet, creating new');
     }
 
-    // Отправляем PUT запрос для создания/обновления файла
     const requestBody: any = {
       message: `Publish design system catalog: ${catalogName}`,
       content: encodedContent,
@@ -292,14 +264,13 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     if (!putResponse.ok) {
       const errorData = await putResponse.json();
       let errorMessage = errorData.message || putResponse.statusText;
-      
-      // Улучшеные сообщения об ошибках
+
       if (putResponse.status === 401) {
-        errorMessage = 'Ошибка аутентификации. GitHub token может быть неправильным, истёкшим или с недостаточными правами. Получите новый token на https://github.com/settings/tokens с scope "repo"';
+        errorMessage = buildGitHubAuthError();
       } else if (putResponse.status === 403) {
-        errorMessage = 'Доступ запрещён. Проверьте, что у вас есть доступ к репозиторию ackedze/design-system_ab';
+        errorMessage = buildGitHubAccessError();
       }
-      
+
       throw new Error(`GitHub API error: ${errorMessage}`);
     }
 
@@ -307,10 +278,9 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     console.log('[CODE] catalog published successfully:', result);
     logDebug('publish-catalog-success', { catalogName, url: result.html_url });
 
-    figma.notify(
-      `✓ Каталог "${catalogName}" опубликован в ${repo}`,
-      { timeout: 5000 },
-    );
+    figma.notify(`✓ Каталог "${catalogName}" опубликован в ${repo}`, {
+      timeout: 5000,
+    });
 
     figma.ui.postMessage({
       type: 'publish-result',

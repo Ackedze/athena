@@ -13,15 +13,16 @@ type ExportSession = {
   totalPages: number;
   pendingPages: PageNode[];
   processedPages: number;
-  components: DSComponent[];
   errors: string[];
   autoContinue: boolean;
-  scope: 'current-page' | 'document';
 };
 
 type ExportScope = 'current-page' | 'document';
 
-type ExportResultSender = (scope: string, data: DSExport) => void | Promise<void>;
+type ExportResultSender = (
+  scope: string,
+  data: DSExport,
+) => void | Promise<void>;
 
 export type PagedExportController = {
   startFromCurrentPage: () => Promise<void>;
@@ -71,10 +72,8 @@ export function createPagedExportController(
       totalPages: pages.length,
       pendingPages: [...pages],
       processedPages: 0,
-      components: [],
       errors: [],
       autoContinue,
-      scope,
     };
     exportCancelToken = { aborted: false };
 
@@ -174,7 +173,6 @@ export function createPagedExportController(
       components: components.length,
       errors: errors.length,
     });
-    session.components.push(...components);
     session.errors.push(...errors);
 
     session.processedPages += 1;

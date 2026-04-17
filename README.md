@@ -1,70 +1,74 @@
 # Athena
 
-Figma-плагин для экспорта компонентов дизайн-системы, переменных и стилей в JSON.
+Figma-плагин для сбора и публикации JSON-артефактов дизайн-системы: компонентных каталогов, токенов и стилей.
 
-## Что делает
-- Экспортирует компоненты с текущей страницы или из всего документа с постраничной обработкой, чтобы UI оставался отзывчивым.
-- Собирает структуру компонентов, variant diff-ы и ссылки на токены и стили.
-- Экспортирует коллекции Variables API и локальные стили.
-- Строит нормализованный JSON-каталог в UI для дальнейших инструментов.
+## Что умеет
 
-## Структура проекта
-- `src/code.ts`: контроллер плагина, оркестрация экспорта, сбор токенов и стилей.
-- `src/pagedExport.ts`: постраничный экспорт компонентов и прогресса.
-- `src/tokenExport.ts`: экспорт коллекций Variables API и разрешение alias-ссылок.
-- `src/styleExport.ts`: экспорт локальных стилей.
-- `src/exportSanitizer.ts`: очистка payload перед отправкой в UI.
-- `src/nameUtils.ts`: разбор имён токенов и стилей.
-- `src/engine/`: разбор компонентов, снимки структуры и вспомогательные функции для извлечения токенов.
-- `src/ui.html`: разметка UI и встроенная логика вкладок, таблиц и скачивания.
-- `src/ui.ts`: вспомогательная логика UI, если она подключена в сборку интерфейса.
-- `build.js`: сборка через esbuild в `dist/`.
-- `manifest.json`: манифест Figma-плагина, который указывает на `dist/code.js` и `dist/ui.html`.
+- Экспортировать компоненты с текущей страницы постранично, сохраняя отдельный JSON на каждую страницу.
+- Показывать таблицу компонентов и нормализованный catalog JSON для текущей собранной страницы.
+- Экспортировать Variables API в JSON.
+- Экспортировать локальные стили в JSON.
+- Публиковать компоненты, токены и стили напрямую в GitHub-репозиторий `ackedze/design-system_ab`.
 
-## Схема работы функций
+## Ключевые файлы
 
-### Общий поток сообщений
+- `src/code.ts`: основной контроллер плагина, маршрутизация UI-сообщений, экспорт токенов/стилей и публикация в GitHub.
+- `src/pagedExport.ts`: постраничный экспорт компонентов, прогресс и ручное/автоматическое продолжение.
+- `src/tokenExport.ts`: чтение коллекций переменных и сериализация значений по mode.
+- `src/styleExport.ts`: чтение локальных стилей и сериализация значений.
+- `src/exportSanitizer.ts`: очистка export payload перед отправкой в UI.
+- `src/engine/`: разбор `COMPONENT_SET`/`COMPONENT`, структура узлов, variant diff-ы и классификация.
+- `src/ui.html`: весь UI плагина, включая вкладки, таблицы, скачивание и публикацию.
+- `build.js`: сборка в `dist/`.
+- `manifest.json`: манифест Figma-плагина.
+
+## Поток работы
+
+```text
+UI (src/ui.html) -> code.ts
+code.ts -> pagedExport.ts | tokenExport.ts | styleExport.ts
+pagedExport.ts -> engine/*
+code.ts -> UI
 ```
-UI (src/ui.html) --postMessage--> code.ts
-code.ts --dispatch--> pagedExport.ts | tokenExport.ts | styleExport.ts
-engine (src/engine) <-- pagedExport.ts
-exportSanitizer.ts --clean payload--> code.ts
-code.ts --postMessage--> UI (src/ui.html)
-```
 
-### Экспорт компонентов (постранично)
-1. UI отправляет `export-components` или `export-components-current-page`.
-2. `code.ts` вызывает `pagedExport.startFromDocument()` или `pagedExport.startFromCurrentPage()`.
-3. `pagedExport.ts` создаёт сессию и вызывает `collectComponentsFromPageChunked` из `src/engine`.
-4. `collectComponentsFromPageChunked` обходит узлы пачками и отдает прогресс.
-5. `pagedExport.ts` отправляет `export-progress` и `export-result` по мере обработки страниц.
-6. `exportSanitizer.ts` обрезает payload перед отправкой в UI.
+### Компоненты
 
-### Экспорт компонентов (без пагинации)
-1. Для пустого списка страниц `pagedExport.ts` вызывает `extractComponentsFromDocument()` или
-   `extractComponentsFromCurrentPage()` из `src/engine`.
-2. `code.ts` отправляет результат через `sendExportResult`.
+1. UI запускает `export-components-current-page`.
+2. `code.ts` вызывает `pagedExport.startFromCurrentPage()`.
+3. `pagedExport.ts` обходит страницы чанками через `collectComponentsFromPageChunked`.
+4. После каждой страницы UI получает отдельный `export-result` с `mode: 'paged'`.
+5. Имя публикуемого/скачиваемого файла совпадает с именем текущего page-каталога.
 
-### Экспорт токенов
+### Токены
+
 1. UI отправляет `collect-tokens`.
-2. `code.ts` вызывает `collectTokensFromFile()` из `src/tokenExport.ts`.
-3. `tokenExport.ts` читает Variables API, строит `valuesByMode` и `hexByMode`.
-4. При необходимости происходит разрешение alias-ссылок через удалённую библиотеку токенов.
-5. `code.ts` отправляет результат в UI.
+2. `code.ts` вызывает `collectTokensFromFile()`.
+3. UI получает `collect-tokens-result`, может скачать или опубликовать JSON.
 
-### Экспорт стилей
+### Стили
+
 1. UI отправляет `collect-styles`.
-2. `code.ts` вызывает `collectStylesFromDocument()` из `src/styleExport.ts`.
-3. `styleExport.ts` собирает local styles, нормализует имена через `splitVariableName`.
-4. `code.ts` отправляет результат в UI.
+2. `code.ts` вызывает `collectStylesFromDocument()`.
+3. UI получает `collect-styles-result`, может скачать или опубликовать JSON.
 
-### Нормализация и классификация компонентов (`engine`)
-1. `componentParser.ts` ищет `COMPONENT_SET` и `COMPONENT`.
-2. `describeComponentSet.ts` снимает базовую структуру и строит патчи по вариантам.
-3. `snapshotNode.ts` извлекает layout, paints, typography, effects и tokens.
-4. `componentMetaClassifier.ts` определяет роль, статус и платформу по правилам нейминга.
+### Публикация
+
+1. UI определяет активную вкладку: `components`, `tokens` или `styles`.
+2. UI формирует payload с тем же именем файла, которое используется для скачивания.
+3. UI показывает диалог ввода GitHub token только если токен ещё не сохранён в памяти текущей сессии.
+4. `code.ts` публикует JSON через GitHub Contents API в `catalogs/{fileName}.json`.
+
+## Использование
+
+1. Импортируйте `manifest.json` в Figma как development plugin.
+2. Запустите Athena.
+3. На вкладке `Components` нажмите `Собрать компоненты`, затем при необходимости `Следующая страница`.
+4. На вкладках `Tokens` и `Styles` используйте соответствующие кнопки сбора.
+5. Для скачивания используйте локальные кнопки `Скачать JSON`.
+6. Для публикации используйте общую кнопку `Опубликовать` справа сверху.
 
 ## Сборка
+
 ```sh
 npm install
 npm run build
@@ -72,20 +76,10 @@ npm run build
 npm run watch
 ```
 
-Вывод идет в `dist/`, а `manifest.json` на него ссылается.
-
-## Использование в Figma
-1. Импортируйте плагин из этой папки в Figma.
-2. Запустите Athena.
-3. Используйте вкладку `Components` для экспорта текущей страницы; для постраничного экспорта используйте `Continue`.
-4. Используйте вкладки `Tokens` и `Styles`, чтобы собрать и скачать JSON.
-
-## Модель данных
-- `DSExport` содержит `meta`, `components` и массивы токенов и стилей.
-- `components` включают узлы структуры, патчи по вариантам и metadata классификации.
-- Логика классификации находится в `src/lib/componentMetaClassifier.ts`.
-- Экспорт токенов использует Variables API и добавляет `hexByMode` для цветовых значений.
+Сборка пишет артефакты в `dist/`, на которые ссылается `manifest.json`.
 
 ## Заметки
-- Разрешение alias-ссылок может обращаться к удалённой библиотеке токенов; см. `src/code.ts`.
-- Установите `DEBUG_MODE` в `src/debug.ts`, чтобы включить подробное логирование.
+
+- Для component export плагин работает в `documentAccess: dynamic-page`, поэтому страницы грузятся асинхронно перед чтением узлов.
+- Alias-резолвинг токенов может обращаться к удалённой библиотеке токенов.
+- Подробное логирование включается через `src/debug.ts`.

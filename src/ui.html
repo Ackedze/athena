@@ -4,7 +4,11 @@
     <meta charset="utf-8" />
     <style>
       body {
-        font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font:
+          12px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
         margin: 16px;
         color: #111;
       }
@@ -141,8 +145,9 @@
         border: 1px solid #eee;
         border-radius: 6px;
         padding: 8px;
-        font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono',
-          Menlo, monospace;
+        font-family:
+          ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo,
+          monospace;
         font-size: 11px;
         line-height: 1.4;
       }
@@ -152,8 +157,9 @@
         border: 1px solid #eee;
         border-radius: 6px;
         padding: 8px;
-        font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono',
-          Menlo, monospace;
+        font-family:
+          ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo,
+          monospace;
         font-size: 11px;
         line-height: 1.4;
         min-height: 240px;
@@ -225,11 +231,11 @@
       <div class="topbar-main">
         <h1>Athena</h1>
         <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="components" type="button">
-          Компоненты
-        </button>
-        <button class="tab" data-tab="tokens" type="button">Токены</button>
-        <button class="tab" data-tab="styles" type="button">Стили</button>
+          <button class="tab active" data-tab="components" type="button">
+            Компоненты
+          </button>
+          <button class="tab" data-tab="tokens" type="button">Токены</button>
+          <button class="tab" data-tab="styles" type="button">Стили</button>
         </div>
       </div>
       <div class="topbar-actions">
@@ -241,14 +247,18 @@
       <div class="controls">
         <button id="export-page-btn">Собрать компоненты</button>
         <button id="download-btn">Скачать JSON</button>
-        <button id="continue-btn" style="display: none">Следующая страница</button>
+        <button id="continue-btn" style="display: none">
+          Следующая страница
+        </button>
       </div>
 
       <div class="summary">
         <div id="summary-meta">
           Нажмите «Собрать компоненты», чтобы получить свежие данные
         </div>
-        <div><strong>Платформы:</strong> <span id="platform-summary">—</span></div>
+        <div>
+          <strong>Платформы:</strong> <span id="platform-summary">—</span>
+        </div>
         <div><strong>Статусы:</strong> <span id="status-summary">—</span></div>
         <div><strong>Роли:</strong> <span id="role-summary">—</span></div>
         <div><strong>Время:</strong> <span id="timer-display">00:00</span></div>
@@ -365,7 +375,9 @@
         <h2>GitHub токен</h2>
         <p>
           Для публикации каталогов требуется GitHub Personal Access Token.
-          <a href="https://github.com/settings/tokens" target="_blank">Получить токен</a>
+          <a href="https://github.com/settings/tokens" target="_blank"
+            >Получить токен</a
+          >
         </p>
         <input
           type="password"
@@ -397,7 +409,9 @@
         var platformSummary = document.getElementById('platform-summary');
         var statusSummary = document.getElementById('status-summary');
         var roleSummary = document.getElementById('role-summary');
-        var componentTableBody = document.getElementById('component-table-body');
+        var componentTableBody = document.getElementById(
+          'component-table-body',
+        );
         var tokenTableBody = document.getElementById('token-table-body');
         var stylesTableBody = document.getElementById('styles-table-body');
         var continueBtn = document.getElementById('continue-btn');
@@ -414,7 +428,6 @@
         var timerDisplay = document.getElementById('timer-display');
         var timerInterval = null;
         var timerStart = null;
-        var exportMode = 'document'; // 'document' vs 'current-page'
         var lastTextareaContent = '';
         var lastDownloadMeta = null;
         var lastStylesJson = '';
@@ -430,7 +443,9 @@
         var githubTokenDialog = document.getElementById('github-token-dialog');
         var githubTokenInput = document.getElementById('github-token-input');
         var githubTokenSaveBtn = document.getElementById('github-token-save');
-        var githubTokenCancelBtn = document.getElementById('github-token-cancel');
+        var githubTokenCancelBtn = document.getElementById(
+          'github-token-cancel',
+        );
         var pendingPublishPayload = null;
         var currentGithubToken = null; // Сохранённый token для текущей сессии
 
@@ -496,7 +511,6 @@
             continueBtn.style.display = 'none';
             continueBtn.disabled = true;
           }
-          exportMode = 'current-page';
           startTimer();
           console.log('[UI] parse components button clicked');
           parent.postMessage(
@@ -556,10 +570,6 @@
             stylesCollected = true;
             renderStyles(styleEntries, true);
           }
-          if (msg.type === 'publish-require-token') {
-            console.log('[UI] github token required');
-            openGithubTokenDialog(msg.payload);
-          }
           if (msg.type === 'publish-result') {
             console.log('[UI] publish result:', msg.payload);
             if (!msg.payload || !msg.payload.success) {
@@ -604,9 +614,18 @@
           }
 
           var current = progress.currentPage || '—';
-          var completed = Math.max(0, Math.min(progress.completed, progress.total));
+          var completed = Math.max(
+            0,
+            Math.min(progress.completed, progress.total),
+          );
           progressLabel.textContent =
-            'Проверяем: ' + current + ' (' + completed + ' из ' + progress.total + ')';
+            'Проверяем: ' +
+            current +
+            ' (' +
+            completed +
+            ' из ' +
+            progress.total +
+            ')';
           progressLabel.style.display = 'block';
         }
 
@@ -620,16 +639,16 @@
             payload.pageName ||
             (meta && meta.files && meta.files[0]) ||
             (payload.progress ? 'page-' + payload.progress.completed : 'page');
-          var componentsCount =
-            payload.data && Array.isArray(payload.data.components)
-              ? payload.data.components.length
-              : 0;
           pagedFiles.push({
             name: pageName,
             fileName: resolveCatalogBaseName({
               library:
-                (payload.data && payload.data.meta && payload.data.meta.library) ||
-                (payload.data && payload.data.meta && payload.data.meta.fileName) ||
+                (payload.data &&
+                  payload.data.meta &&
+                  payload.data.meta.library) ||
+                (payload.data &&
+                  payload.data.meta &&
+                  payload.data.meta.fileName) ||
                 'library',
               fileName: pageName,
             }),
@@ -642,7 +661,7 @@
             meta: payload.data ? payload.data.meta : null,
           });
           window.__pagedFiles = pagedFiles;
-          }
+        }
 
         function resetPagedOutputs() {
           pagedFiles = [];
@@ -661,34 +680,17 @@
             componentTableBody.innerHTML =
               '<tr><td colspan="6">Данных пока нет</td></tr>';
           }
-          if (tokenTableBody) {
-            tokenTableBody.innerHTML =
-              '<tr><td colspan="4">Данных пока нет</td></tr>';
-          }
-          if (tokensSummaryLabel) {
-            tokensSummaryLabel.textContent =
-              'Соберите токены, чтобы увидеть данные';
-          }
-          lastTokensJson = '';
-          lastTokensMeta = null;
-          if (stylesTableBody) {
-            stylesTableBody.innerHTML =
-              '<tr><td colspan="5">Данных пока нет</td></tr>';
-          }
-          if (stylesSummaryLabel) {
-            stylesSummaryLabel.textContent =
-              'Соберите стили, чтобы увидеть данные';
-          }
-          lastStylesJson = '';
-          lastStylesMeta = null;
         }
 
         function renderExportResult(payload) {
-          console.log('[UI] renderExportResult called', { mode: payload?.mode, componentsCount: payload?.data?.components?.length });
+          console.log('[UI] renderExportResult called', {
+            mode: payload?.mode,
+            componentsCount: payload?.data?.components?.length,
+          });
           window.__lastExportPayload = payload;
           lastExportData = payload && payload.data ? payload.data : null;
           normalizeCatalogOutput(payload.data || null);
-          
+
           if (payload && payload.mode === 'paged') {
             console.log('[UI] paged result, remembering file');
             rememberPagedFile(payload);
@@ -697,7 +699,7 @@
             window.__pagedFiles = pagedFiles;
             updateProgressLabel(null);
           }
-          
+
           if (output) {
             output.value = payload.json;
             console.log(
@@ -725,7 +727,10 @@
                 payload.data.meta.fileName) ||
               'library';
             lastDownloadMeta = { library: libraryLabel, fileName: pageLabel };
-            lastCatalogBaseName = resolveCatalogBaseName(lastDownloadMeta, pageLabel);
+            lastCatalogBaseName = resolveCatalogBaseName(
+              lastDownloadMeta,
+              pageLabel,
+            );
           } else if (payload && payload.data) {
             lastDownloadMeta = {
               library: payload.data.meta?.library,
@@ -742,7 +747,9 @@
             ? exportData.components
             : [];
 
-          console.log('[UI] rendering summary and components', { componentsCount: components.length });
+          console.log('[UI] rendering summary and components', {
+            componentsCount: components.length,
+          });
           renderSummary(exportData, components);
           renderComponents(components);
         }
@@ -763,7 +770,9 @@
 
         function buildNormalizedCatalog(data) {
           var meta = (data && data.meta) || {};
-          var components = Array.isArray(data.components) ? data.components : [];
+          var components = Array.isArray(data.components)
+            ? data.components
+            : [];
           var elements = buildCatalogElements(components);
           return {
             kind: 'catalog',
@@ -773,7 +782,10 @@
               generatedAt: meta.generatedAt || undefined,
               exportVersion: meta.version || undefined,
               scope: meta.scope || undefined,
-              files: Array.isArray(meta.files) && meta.files.length ? meta.files : undefined,
+              files:
+                Array.isArray(meta.files) && meta.files.length
+                  ? meta.files
+                  : undefined,
               componentCount: components.length,
               elementCount: elements.length,
             },
@@ -813,9 +825,13 @@
         function buildCatalogElements(components) {
           var elements = [];
           components.forEach(function (component) {
-            var structure = Array.isArray(component.structure) ? component.structure : [];
+            var structure = Array.isArray(component.structure)
+              ? component.structure
+              : [];
             structure.forEach(function (node) {
-              elements.push(buildCatalogElement(node, component.name, component.key));
+              elements.push(
+                buildCatalogElement(node, component.name, component.key),
+              );
             });
           });
           return elements;
@@ -905,10 +921,13 @@
 
         function buildCatalogStroke(node) {
           var token = node.strokeToken || null;
-          var weight = typeof node.strokeWeight === 'number' ? node.strokeWeight : null;
+          var weight =
+            typeof node.strokeWeight === 'number' ? node.strokeWeight : null;
           var align = node.strokeAlign || null;
           var styleKey =
-            node.styles && node.styles.stroke ? node.styles.stroke.styleKey : null;
+            node.styles && node.styles.stroke
+              ? node.styles.stroke.styleKey
+              : null;
           var color = null;
           if (node.strokes && node.strokes.length) {
             color = node.strokes
@@ -918,7 +937,8 @@
               })
               .join(',');
           }
-          if (weight === null && !align && !token && !styleKey && !color) return null;
+          if (weight === null && !align && !token && !styleKey && !color)
+            return null;
           var result = { weight: weight, align: align };
           if (token) {
             result.token = token;
@@ -966,12 +986,15 @@
 
         function buildCatalogTypography(node) {
           var text = node.text || {};
-          var fontName = text.fontName || (node.typography && node.typography.fontName);
-          var fontSize = text.fontSize || (node.typography && node.typography.fontSize);
+          var fontName =
+            text.fontName || (node.typography && node.typography.fontName);
+          var fontSize =
+            text.fontSize || (node.typography && node.typography.fontSize);
           if (!fontName || !fontSize) return null;
           var parts = fontName.split(' ');
           var weight = parts.length > 1 ? parts[parts.length - 1] : fontName;
-          var family = parts.length > 1 ? parts.slice(0, -1).join(' ') : fontName;
+          var family =
+            parts.length > 1 ? parts.slice(0, -1).join(' ') : fontName;
           var result = {
             family: family,
             weight: weight,
@@ -1024,8 +1047,10 @@
           }
           if (node.text) {
             if (node.text.lineHeight) parts.push('lh=' + node.text.lineHeight);
-            if (node.text.letterSpacing) parts.push('ls=' + node.text.letterSpacing);
-            if (node.text.paragraphSpacing) parts.push('ps=' + node.text.paragraphSpacing);
+            if (node.text.letterSpacing)
+              parts.push('ls=' + node.text.letterSpacing);
+            if (node.text.paragraphSpacing)
+              parts.push('ps=' + node.text.paragraphSpacing);
           }
           if (node.fills && node.fills.length) {
             parts.push('fill=' + formatPaints(node.fills));
@@ -1040,9 +1065,12 @@
             parts.push('strokeAlign=' + node.strokeAlign);
           }
           if (node.styles) {
-            if (node.styles.fill) parts.push('fill=' + node.styles.fill.styleKey);
-            if (node.styles.stroke) parts.push('stroke=' + node.styles.stroke.styleKey);
-            if (node.styles.text) parts.push('textStyle=' + node.styles.text.styleKey);
+            if (node.styles.fill)
+              parts.push('fill=' + node.styles.fill.styleKey);
+            if (node.styles.stroke)
+              parts.push('stroke=' + node.styles.stroke.styleKey);
+            if (node.styles.text)
+              parts.push('textStyle=' + node.styles.text.styleKey);
           }
           return parts.join(' ');
         }
@@ -1077,9 +1105,7 @@
             var scope = data && data.meta ? data.meta.scope : 'document';
 
             var pagesLabel =
-              scope === 'current-page'
-                ? files[0] || '—'
-                : String(files.length);
+              scope === 'current-page' ? files[0] || '—' : String(files.length);
 
             var generatedAt =
               data && data.meta && data.meta.generatedAt
@@ -1175,31 +1201,31 @@
                 '<td colspan="6">' +
                 escapeHtml(group.group) +
                 '</td>' +
-              '</tr>',
+                '</tr>',
             );
 
             group.entries.forEach(function (entry) {
               rows.push(
                 '<tr>' +
-                '<td>' +
-                escapeHtml(entry.collection || '—') +
-                '</td>' +
-                '<td>' +
-                escapeHtml(entry.mode || '—') +
-                '</td>' +
-                '<td>' +
-                escapeHtml(entry.group || '—') +
-                '</td>' +
-                '<td>' +
-                escapeHtml(entry.name || '—') +
-                '</td>' +
-                '<td>' +
-                escapeHtml(entry.value || '—') +
-                '</td>' +
-                '<td>' +
-                escapeHtml(entry.key || '—') +
-                '</td>' +
-                '</tr>',
+                  '<td>' +
+                  escapeHtml(entry.collection || '—') +
+                  '</td>' +
+                  '<td>' +
+                  escapeHtml(entry.mode || '—') +
+                  '</td>' +
+                  '<td>' +
+                  escapeHtml(entry.group || '—') +
+                  '</td>' +
+                  '<td>' +
+                  escapeHtml(entry.name || '—') +
+                  '</td>' +
+                  '<td>' +
+                  escapeHtml(entry.value || '—') +
+                  '</td>' +
+                  '<td>' +
+                  escapeHtml(entry.key || '—') +
+                  '</td>' +
+                  '</tr>',
               );
             });
           });
@@ -1263,7 +1289,10 @@
           if (value.kind === 'text') {
             var parts = [];
             if (value.data.fontName) parts.push('font: ' + value.data.fontName);
-            if (value.data.fontSize !== null && value.data.fontSize !== undefined) {
+            if (
+              value.data.fontSize !== null &&
+              value.data.fontSize !== undefined
+            ) {
               parts.push('size: ' + formatNumber(value.data.fontSize));
             }
             if (value.data.lineHeight) {
@@ -1329,19 +1358,11 @@
             typeof color.a === 'number'
               ? color.a
               : typeof color.alpha === 'number'
-              ? color.alpha
-              : 1;
+                ? color.alpha
+                : 1;
           var hex = toHex(r) + toHex(g) + toHex(b);
           var rgba =
-            'rgba(' +
-            r +
-            ', ' +
-            g +
-            ', ' +
-            b +
-            ', ' +
-            alpha.toFixed(2) +
-            ')';
+            'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha.toFixed(2) + ')';
           return '#' + hex + ' / ' + rgba;
         }
 
@@ -1490,20 +1511,12 @@
             typeof value.a === 'number'
               ? value.a
               : typeof value.alpha === 'number'
-              ? value.alpha
-              : 1;
+                ? value.alpha
+                : 1;
           alpha = Math.max(0, Math.min(1, alpha));
           var hex = toHex(r) + toHex(g) + toHex(b);
           var rgba =
-            'rgba(' +
-            r +
-            ', ' +
-            g +
-            ', ' +
-            b +
-            ', ' +
-            alpha.toFixed(2) +
-            ')';
+            'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha.toFixed(2) + ')';
           return '#' + hex + ' / ' + rgba;
         }
 
@@ -1557,7 +1570,6 @@
             .join(' • ');
         }
 
-
         function updateContinueState(progress) {
           if (!continueBtn) return;
           if (!progress) {
@@ -1586,7 +1598,9 @@
         }
 
         function triggerDownload() {
-          var content = normalizedApplied ? normalizedJson : lastTextareaContent;
+          var content = normalizedApplied
+            ? normalizedJson
+            : lastTextareaContent;
           if (!content) {
             console.warn('[UI] nothing to download yet');
             return;
@@ -1696,7 +1710,9 @@
             };
           }
 
-          var content = normalizedApplied ? normalizedJson : lastTextareaContent;
+          var content = normalizedApplied
+            ? normalizedJson
+            : lastTextareaContent;
           if (!content) {
             return { error: 'Сначала соберите компоненты' };
           }
@@ -1705,17 +1721,6 @@
             meta: lastDownloadMeta,
             fileName: getCurrentCatalogBaseName() + '.json',
           };
-        }
-
-        function normalizeName(rawName) {
-          if (!rawName) return 'export';
-          return rawName
-            .split('/')
-            .map(function (part) {
-              return part.trim();
-            })
-            .filter(Boolean)
-            .join(' ');
         }
 
         function sanitizeFileName(name) {
@@ -1809,14 +1814,23 @@
 
         function triggerPublish() {
           var publishPayload = getPublishPayload();
-          if (!publishPayload || !publishPayload.json || !publishPayload.fileName) {
-            console.warn('[UI] nothing to publish yet', { activeTab: activeTab });
-            alert((publishPayload && publishPayload.error) || 'Нет данных для публикации');
+          if (
+            !publishPayload ||
+            !publishPayload.json ||
+            !publishPayload.fileName
+          ) {
+            console.warn('[UI] nothing to publish yet', {
+              activeTab: activeTab,
+            });
+            alert(
+              (publishPayload && publishPayload.error) ||
+                'Нет данных для публикации',
+            );
             return;
           }
           var catalogName = publishPayload.fileName;
           console.log('[UI] publishing catalog:', catalogName);
-          
+
           // Если у нас уже есть token, используем его сразу
           if (currentGithubToken) {
             console.log('[UI] using saved token from session');
@@ -1837,7 +1851,7 @@
             );
             return;
           }
-          
+
           // Иначе показываем диалог ввода token
           openGithubTokenDialog({
             json: publishPayload.json,
