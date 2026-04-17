@@ -16,6 +16,9 @@ console.log('[CODE] UI shown');
 logDebug('ui-shown', { width: 1280, height: 720 });
 
 const pagedExport = createPagedExportController(sendExportResult);
+const GITHUB_OWNER = 'ackedze';
+const GITHUB_REPO = 'design-system_ab';
+const REFERENCE_SOURCES_PATH = 'JSONS/referenceSourcesMVP.json';
 
 // Роутим UI events на export/collect actions.
 figma.ui.onmessage = (msg) => {
@@ -144,7 +147,32 @@ async function collectStylesAndSend() {
 interface PublishPayload {
   json: string;
   catalogName: string;
-  meta?: Record<string, unknown>;
+  meta?: PublishMeta;
+}
+
+type PublishArtifactKind = 'components' | 'tokens' | 'styles';
+
+interface PublishMeta extends Record<string, unknown> {
+  kind?: PublishArtifactKind;
+  pageName?: string;
+}
+
+interface ReferenceCatalogSource {
+  kind?: PublishArtifactKind;
+  figmaLink?: string;
+  fileKey?: string;
+  pageName?: string;
+}
+
+interface ReferenceCatalogEntry {
+  fileName: string;
+  path: string;
+  source?: ReferenceCatalogSource;
+}
+
+interface ReferenceCatalogList {
+  baseUrl?: string;
+  catalogs?: ReferenceCatalogEntry[];
 }
 
 function stringToBase64(str: string): string {
@@ -184,6 +212,160 @@ function buildGitHubAuthError(): string {
 
 function buildGitHubAccessError(): string {
   return 'Доступ запрещён. Проверьте, что у вас есть доступ к репозиторию ackedze/design-system_ab';
+}
+
+function base64ToString(value: string): string {
+  const normalized = value.replace(/\s+/g, '');
+  if (typeof atob !== 'undefined') {
+    return decodeURIComponent(escape(atob(normalized)));
+  }
+
+  const chars =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  let result = '';
+  let i = 0;
+
+  while (i < normalized.length) {
+    const enc1 = chars.indexOf(normalized.charAt(i++));
+    const enc2 = chars.indexOf(normalized.charAt(i++));
+    const enc3 = chars.indexOf(normalized.charAt(i++));
+    const enc4 = chars.indexOf(normalized.charAt(i++));
+
+    const chr1 = (enc1 << 2) | (enc2 >> 4);
+    const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+    const chr3 = ((enc3 & 3) << 6) | enc4;
+
+    result += String.fromCharCode(chr1);
+    if (enc3 !== 64) {
+      result += String.fromCharCode(chr2);
+    }
+    if (enc4 !== 64) {
+      result += String.fromCharCode(chr3);
+    }
+  }
+
+  return decodeURIComponent(escape(result));
+}
+
+function extractFigmaFileKey(link: string | undefined): string | undefined {
+  if (!link) return undefined;
+  const match = link.match(/figma\.com\/(?:design|file)\/([^/?#]+)/i);
+  return match?.[1];
+}
+
+function normalizeMatchKey(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function buildFallbackCatalogPath(catalogName: string): string {
+  return `catalogs/${catalogName.replace(/\.json$/, '')}.json`;
+}
+
+function normalizeRepoPath(value: string): string {
+  return value.replace(/^\/+/, '').trim();
+}
+
+function getPathBaseName(value: string | undefined): string {
+  if (!value) return '';
+  const normalized = value.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] ?? normalized;
+}
+
+function matchesReferenceEntry(
+  entry: ReferenceCatalogEntry,
+  target: {
+    kind?: PublishArtifactKind;
+    fileKey?: string;
+    catalogName?: string;
+    pageName?: string;
+  },
+): boolean {
+  const source = entry.source;
+  if (!source || !target.kind) return false;
+  if (source.kind !== target.kind) return false;
+
+  const entryFileKey = source.fileKey || extractFigmaFileKey(source.figmaLink);
+  if (!entryFileKey || !target.fileKey) return false;
+  if (normalizeMatchKey(entryFileKey) !== normalizeMatchKey(target.fileKey)) {
+    return false;
+  }
+
+  if (target.kind === 'components') {
+    if (
+      normalizeMatchKey(source.pageName) === normalizeMatchKey(target.pageName)
+    ) {
+      return true;
+    }
+
+    const entryBaseName = getPathBaseName(entry.path || entry.fileName);
+    return normalizeMatchKey(entryBaseName) === normalizeMatchKey(target.catalogName);
+  }
+
+  return true;
+}
+
+async function fetchReferenceCatalogList(
+  githubToken: string,
+): Promise<ReferenceCatalogList | null> {
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${REFERENCE_SOURCES_PATH}`;
+  const response = await fetch(apiUrl, {
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+  if (response.status === 401) {
+    throw new Error(buildGitHubAuthError());
+  }
+  if (response.status === 403) {
+    throw new Error(buildGitHubAccessError());
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Не удалось загрузить referenceSourcesMVP.json: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const payload = (await response.json()) as { content?: string };
+  if (!payload.content) {
+    return null;
+  }
+
+  return JSON.parse(base64ToString(payload.content)) as ReferenceCatalogList;
+}
+
+async function resolvePublishFilePath(
+  payload: PublishPayload,
+  githubToken: string,
+): Promise<string> {
+  const fallbackPath = buildFallbackCatalogPath(payload.catalogName);
+  const kind = payload.meta?.kind;
+  const fileKey = figma.fileKey;
+  const pageName =
+    typeof payload.meta?.pageName === 'string' ? payload.meta.pageName : '';
+
+  if (!kind || !fileKey) {
+    return fallbackPath;
+  }
+
+  const referenceList = await fetchReferenceCatalogList(githubToken);
+  const matchedEntry = referenceList?.catalogs?.find((entry) =>
+    matchesReferenceEntry(entry, {
+      kind,
+      catalogName: payload.catalogName,
+      fileKey,
+      pageName,
+    }),
+  );
+
+  return matchedEntry?.path
+    ? normalizeRepoPath(matchedEntry.path)
+    : fallbackPath;
 }
 
 async function getExistingFileSha(
@@ -227,13 +409,20 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     }
 
     const catalogName = payload.catalogName.replace(/\.json$/, '');
-    const repo = 'ackedze/design-system_ab';
-    const owner = 'ackedze';
-    const repoName = 'design-system_ab';
-    const filePath = `catalogs/${catalogName}.json`;
+    const repo = `${GITHUB_OWNER}/${GITHUB_REPO}`;
+    const owner = GITHUB_OWNER;
+    const repoName = GITHUB_REPO;
+    const filePath = await resolvePublishFilePath(payload, githubToken);
     const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}`;
 
-    console.log('[CODE] publishing to GitHub:', { apiUrl, catalogName });
+    console.log('[CODE] publishing to GitHub:', {
+      apiUrl,
+      catalogName,
+      filePath,
+      kind: payload.meta?.kind,
+      fileKey: figma.fileKey,
+      pageName: payload.meta?.pageName,
+    });
 
     const encodedContent = stringToBase64(payload.json);
     const sha = await getExistingFileSha(apiUrl, githubToken);

@@ -1692,23 +1692,27 @@
             if (!lastTokensJson) {
               return { error: 'Сначала соберите токены' };
             }
-            return {
-              json: lastTokensJson,
-              meta: lastTokensMeta,
-              fileName: getTokensExportBaseName() + '.json',
-            };
-          }
+          return {
+            json: lastTokensJson,
+            meta: Object.assign({}, lastTokensMeta, {
+              kind: 'tokens',
+            }),
+            fileName: getTokensExportBaseName() + '.json',
+          };
+        }
 
           if (activeTab === 'styles') {
             if (!lastStylesJson) {
               return { error: 'Сначала соберите стили' };
             }
-            return {
-              json: lastStylesJson,
-              meta: lastStylesMeta,
-              fileName: getStylesExportBaseName() + '.json',
-            };
-          }
+          return {
+            json: lastStylesJson,
+            meta: Object.assign({}, lastStylesMeta, {
+              kind: 'styles',
+            }),
+            fileName: getStylesExportBaseName() + '.json',
+          };
+        }
 
           var content = normalizedApplied
             ? normalizedJson
@@ -1718,7 +1722,13 @@
           }
           return {
             json: content,
-            meta: lastDownloadMeta,
+            meta: Object.assign({}, lastDownloadMeta, {
+              kind: 'components',
+              pageName:
+                lastDownloadMeta && typeof lastDownloadMeta.fileName === 'string'
+                  ? lastDownloadMeta.fileName
+                  : '',
+            }),
             fileName: getCurrentCatalogBaseName() + '.json',
           };
         }
