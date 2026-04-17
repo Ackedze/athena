@@ -279,8 +279,18 @@ function normalizeRepoPath(value: string): string {
   return value.replace(/^\/+/, '').trim();
 }
 
+function getManifestPublishRoot(): string {
+  const normalizedPath = normalizeRepoPath(REFERENCE_SOURCES_PATH);
+  const lastSlashIndex = normalizedPath.lastIndexOf('/');
+  if (lastSlashIndex === -1) {
+    return normalizedPath;
+  }
+  return normalizedPath.slice(0, lastSlashIndex);
+}
+
 function resolvePublishRootFromBaseUrl(baseUrl: string | undefined): string {
-  if (!baseUrl) return '';
+  const manifestRoot = getManifestPublishRoot();
+  if (!baseUrl) return manifestRoot;
 
   try {
     const url = new URL(baseUrl);
@@ -293,10 +303,11 @@ function resolvePublishRootFromBaseUrl(baseUrl: string | undefined): string {
       segments.shift();
     }
 
-    return normalizeRepoPath(segments.join('/'));
+    const parsedRoot = normalizeRepoPath(segments.join('/'));
+    return parsedRoot || manifestRoot;
   } catch (error) {
     void error;
-    return '';
+    return manifestRoot;
   }
 }
 
