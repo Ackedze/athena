@@ -1687,7 +1687,23 @@
           );
         }
 
+        function extractFigmaFileKeyFromUrl(url) {
+          if (!url || typeof url !== 'string') return '';
+          var match = url.match(/figma\.com\/(?:design|file)\/([^\/?#]+)/i);
+          return match && match[1] ? match[1] : '';
+        }
+
+        function getCurrentFigmaSourceMeta() {
+          var figmaLink = document.referrer || '';
+          var fileKey = extractFigmaFileKeyFromUrl(figmaLink);
+          return {
+            figmaLink: figmaLink,
+            fileKey: fileKey,
+          };
+        }
+
         function getPublishPayload() {
+          var figmaSourceMeta = getCurrentFigmaSourceMeta();
           if (activeTab === 'tokens') {
             if (!lastTokensJson) {
               return { error: 'Сначала соберите токены' };
@@ -1696,6 +1712,8 @@
             json: lastTokensJson,
             meta: Object.assign({}, lastTokensMeta, {
               kind: 'tokens',
+              fileKey: figmaSourceMeta.fileKey,
+              figmaLink: figmaSourceMeta.figmaLink,
             }),
             fileName: getTokensExportBaseName() + '.json',
           };
@@ -1709,6 +1727,8 @@
             json: lastStylesJson,
             meta: Object.assign({}, lastStylesMeta, {
               kind: 'styles',
+              fileKey: figmaSourceMeta.fileKey,
+              figmaLink: figmaSourceMeta.figmaLink,
             }),
             fileName: getStylesExportBaseName() + '.json',
           };
@@ -1724,6 +1744,8 @@
             json: content,
             meta: Object.assign({}, lastDownloadMeta, {
               kind: 'components',
+              fileKey: figmaSourceMeta.fileKey,
+              figmaLink: figmaSourceMeta.figmaLink,
               pageName:
                 lastDownloadMeta && typeof lastDownloadMeta.fileName === 'string'
                   ? lastDownloadMeta.fileName

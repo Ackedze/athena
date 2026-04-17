@@ -155,6 +155,8 @@ type PublishArtifactKind = 'components' | 'tokens' | 'styles';
 interface PublishMeta extends Record<string, unknown> {
   kind?: PublishArtifactKind;
   pageName?: string;
+  fileKey?: string;
+  figmaLink?: string;
 }
 
 interface ReferenceCatalogSource {
@@ -253,16 +255,68 @@ function extractFigmaFileKey(link: string | undefined): string | undefined {
   return match?.[1];
 }
 
+function resolveCurrentFileKey(meta: PublishMeta | undefined): string | undefined {
+  if (typeof meta?.fileKey === 'string' && meta.fileKey.trim()) {
+    return meta.fileKey.trim();
+  }
+
+  const linkFileKey =
+    typeof meta?.figmaLink === 'string'
+      ? extractFigmaFileKey(meta.figmaLink)
+      : undefined;
+  if (linkFileKey) {
+    return linkFileKey;
+  }
+
+  return figma.fileKey;
+}
+
 function normalizeMatchKey(value: string | undefined): string {
   return (value ?? '').trim().toLowerCase();
 }
 
-function buildFallbackCatalogPath(catalogName: string): string {
-  return `catalogs/${catalogName.replace(/\.json$/, '')}.json`;
-}
-
 function normalizeRepoPath(value: string): string {
   return value.replace(/^\/+/, '').trim();
+}
+
+function resolvePublishRootFromBaseUrl(baseUrl: string | undefined): string {
+  if (!baseUrl) return '';
+
+  try {
+    const url = new URL(baseUrl);
+    const segments = url.pathname
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (segments.length > 0 && normalizeMatchKey(segments[0]) === GITHUB_REPO) {
+      segments.shift();
+    }
+
+    return normalizeRepoPath(segments.join('/'));
+  } catch (error) {
+    void error;
+    return '';
+  }
+}
+
+function joinRepoPath(root: string, relativePath: string): string {
+  const normalizedRoot = normalizeRepoPath(root);
+  const normalizedPath = normalizeRepoPath(relativePath);
+
+  if (!normalizedRoot) {
+    return normalizedPath;
+  }
+  if (
+    normalizeMatchKey(normalizedPath) === normalizeMatchKey(normalizedRoot) ||
+    normalizeMatchKey(normalizedPath).startsWith(
+      normalizeMatchKey(normalizedRoot) + '/',
+    )
+  ) {
+    return normalizedPath;
+  }
+
+  return `${normalizedRoot}/${normalizedPath}`;
 }
 
 function getPathBaseName(value: string | undefined): string {
@@ -286,23 +340,35 @@ function matchesReferenceEntry(
   if (source.kind !== target.kind) return false;
 
   const entryFileKey = source.fileKey || extractFigmaFileKey(source.figmaLink);
-  if (!entryFileKey || !target.fileKey) return false;
-  if (normalizeMatchKey(entryFileKey) !== normalizeMatchKey(target.fileKey)) {
+  if (
+    entryFileKey &&
+    target.fileKey &&
+    normalizeMatchKey(entryFileKey) !== normalizeMatchKey(target.fileKey)
+  ) {
     return false;
   }
 
+  const entryBaseName = getPathBaseName(entry.path || entry.fileName);
+  const entryFileName = getPathBaseName(entry.fileName);
+  const nameMatches =
+    normalizeMatchKey(entryBaseName) === normalizeMatchKey(target.catalogName) ||
+    normalizeMatchKey(entryFileName) === normalizeMatchKey(target.catalogName);
+
   if (target.kind === 'components') {
-    if (
-      normalizeMatchKey(source.pageName) === normalizeMatchKey(target.pageName)
-    ) {
+    const pageMatches =
+      normalizeMatchKey(source.pageName) === normalizeMatchKey(target.pageName);
+
+    if (pageMatches || nameMatches) {
       return true;
     }
-
-    const entryBaseName = getPathBaseName(entry.path || entry.fileName);
-    return normalizeMatchKey(entryBaseName) === normalizeMatchKey(target.catalogName);
+    return false;
   }
 
-  return true;
+  if (nameMatches) {
+    return true;
+  }
+
+  return Boolean(entryFileKey && target.fileKey);
 }
 
 async function fetchReferenceCatalogList(
@@ -343,17 +409,24 @@ async function resolvePublishFilePath(
   payload: PublishPayload,
   githubToken: string,
 ): Promise<string> {
-  const fallbackPath = buildFallbackCatalogPath(payload.catalogName);
   const kind = payload.meta?.kind;
-  const fileKey = figma.fileKey;
+  const fileKey = resolveCurrentFileKey(payload.meta);
   const pageName =
     typeof payload.meta?.pageName === 'string' ? payload.meta.pageName : '';
 
-  if (!kind || !fileKey) {
-    return fallbackPath;
+  if (!kind) {
+    throw new Error(
+      'Не удалось определить тип публикуемого каталога. Для публикации нужен kind.',
+    );
   }
 
   const referenceList = await fetchReferenceCatalogList(githubToken);
+  if (!referenceList?.catalogs?.length) {
+    throw new Error(
+      'referenceSourcesMVP.json недоступен или не содержит catalogs. Публикация остановлена.',
+    );
+  }
+
   const matchedEntry = referenceList?.catalogs?.find((entry) =>
     matchesReferenceEntry(entry, {
       kind,
@@ -363,9 +436,14 @@ async function resolvePublishFilePath(
     }),
   );
 
-  return matchedEntry?.path
-    ? normalizeRepoPath(matchedEntry.path)
-    : fallbackPath;
+  if (!matchedEntry?.path) {
+    throw new Error(
+      `В referenceSourcesMVP.json не найден путь для ${payload.catalogName}. Публикация остановлена.`,
+    );
+  }
+
+  const publishRoot = resolvePublishRootFromBaseUrl(referenceList.baseUrl);
+  return joinRepoPath(publishRoot, matchedEntry.path);
 }
 
 async function getExistingFileSha(
@@ -420,7 +498,7 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
       catalogName,
       filePath,
       kind: payload.meta?.kind,
-      fileKey: figma.fileKey,
+      fileKey: resolveCurrentFileKey(payload.meta),
       pageName: payload.meta?.pageName,
     });
 
