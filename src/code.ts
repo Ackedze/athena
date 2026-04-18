@@ -162,6 +162,8 @@ interface PublishMeta extends Record<string, unknown> {
 interface ReferenceCatalogSource {
   kind?: PublishArtifactKind;
   figmaLink?: string;
+  figmaLibLink?: string;
+  figmaPageLink?: string;
   fileKey?: string;
   pageName?: string;
 }
@@ -253,6 +255,18 @@ function extractFigmaFileKey(link: string | undefined): string | undefined {
   if (!link) return undefined;
   const match = link.match(/figma\.com\/(?:design|file)\/([^/?#]+)/i);
   return match?.[1];
+}
+
+function resolveReferenceSourceFileKey(
+  source: ReferenceCatalogSource | undefined,
+): string | undefined {
+  if (!source) return undefined;
+  return (
+    source.fileKey ||
+    extractFigmaFileKey(source.figmaLibLink) ||
+    extractFigmaFileKey(source.figmaPageLink) ||
+    extractFigmaFileKey(source.figmaLink)
+  );
 }
 
 function resolveCurrentFileKey(meta: PublishMeta | undefined): string | undefined {
@@ -350,7 +364,7 @@ function matchesReferenceEntry(
   if (!source || !target.kind) return false;
   if (source.kind !== target.kind) return false;
 
-  const entryFileKey = source.fileKey || extractFigmaFileKey(source.figmaLink);
+  const entryFileKey = resolveReferenceSourceFileKey(source);
   if (
     entryFileKey &&
     target.fileKey &&
