@@ -174,9 +174,16 @@ interface ReferenceCatalogEntry {
   source?: ReferenceCatalogSource;
 }
 
+interface ReferenceLibrary {
+  name: string;
+  source?: ReferenceCatalogSource;
+  catalogs?: ReferenceCatalogEntry[];
+}
+
 interface ReferenceCatalogList {
   baseUrl?: string;
   catalogs?: ReferenceCatalogEntry[];
+  libraries?: ReferenceLibrary[];
 }
 
 function stringToBase64(str: string): string {
@@ -396,6 +403,34 @@ function matchesReferenceEntry(
   return Boolean(entryFileKey && target.fileKey);
 }
 
+function normalizeReferenceCatalogEntries(
+  referenceList: ReferenceCatalogList | null,
+): ReferenceCatalogEntry[] {
+  if (!referenceList) {
+    return [];
+  }
+
+  const flatCatalogs = Array.isArray(referenceList.catalogs)
+    ? referenceList.catalogs
+    : [];
+  const libraryCatalogs: ReferenceCatalogEntry[] = [];
+
+  if (Array.isArray(referenceList.libraries)) {
+    referenceList.libraries.forEach((library) => {
+      const catalogs = Array.isArray(library.catalogs) ? library.catalogs : [];
+      catalogs.forEach((entry) => {
+        libraryCatalogs.push(
+          Object.assign({}, entry, {
+            source: Object.assign({}, library.source || {}, entry.source || {}),
+          }),
+        );
+      });
+    });
+  }
+
+  return flatCatalogs.concat(libraryCatalogs);
+}
+
 async function fetchReferenceCatalogList(
   githubToken: string,
 ): Promise<ReferenceCatalogList | null> {
@@ -446,13 +481,14 @@ async function resolvePublishFilePath(
   }
 
   const referenceList = await fetchReferenceCatalogList(githubToken);
-  if (!referenceList?.catalogs?.length) {
+  const referenceEntries = normalizeReferenceCatalogEntries(referenceList);
+  if (!referenceEntries.length) {
     throw new Error(
-      'referenceSourcesMVP.json недоступен или не содержит catalogs. Публикация остановлена.',
+      'referenceSourcesMVP.json недоступен или не содержит каталогов. Публикация остановлена.',
     );
   }
 
-  const matchedEntry = referenceList?.catalogs?.find((entry) =>
+  const matchedEntry = referenceEntries.find((entry) =>
     matchesReferenceEntry(entry, {
       kind,
       catalogName: payload.catalogName,
