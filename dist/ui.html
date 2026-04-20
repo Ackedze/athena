@@ -262,7 +262,20 @@
         <div><strong>Статусы:</strong> <span id="status-summary">—</span></div>
         <div><strong>Роли:</strong> <span id="role-summary">—</span></div>
         <div><strong>Время:</strong> <span id="timer-display">00:00</span></div>
+        <div><strong>Файл:</strong> <span id="catalog-file-name">—</span></div>
         <div id="progress-label" style="display: none"></div>
+
+        <div
+          id="runner-publish-meta"
+          data-ready="false"
+          data-file-name=""
+          data-catalog-base-name=""
+          data-page-name=""
+          data-kind=""
+          data-file-key=""
+          data-figma-link=""
+          hidden
+        ></div>
       </div>
 
       <div class="layout">
@@ -409,6 +422,8 @@
         var platformSummary = document.getElementById('platform-summary');
         var statusSummary = document.getElementById('status-summary');
         var roleSummary = document.getElementById('role-summary');
+        var catalogFileName = document.getElementById('catalog-file-name');
+        var runnerPublishMeta = document.getElementById('runner-publish-meta');
         var componentTableBody = document.getElementById(
           'component-table-body',
         );
@@ -506,7 +521,7 @@
         bindButton(exportPageBtn, function () {
           pagedFiles = [];
           window.__pagedFiles = pagedFiles;
-          window.__runnerPublishPayload = null;
+          resetRunnerPublishMeta();
           waitingForContinue = false;
           updateProgressLabel(null);
           resetPagedOutputs();
@@ -565,7 +580,10 @@
             stopTimer();
             console.log('[UI] calling renderExportResult...');
             renderExportResult(payload);
-            console.log('[UI] renderExportResult returned, window.__runnerPublishPayload now:', window.__runnerPublishPayload);
+            console.log(
+              '[UI] renderExportResult returned, window.__runnerPublishPayload now:',
+              window.__runnerPublishPayload,
+            );
             updateContinueState(payload.progress);
           }
           if (msg.type === 'collect-tokens-result') {
@@ -588,7 +606,10 @@
           if (msg.type === 'publish-result') {
             console.log('[UI] publish result:', msg.payload);
             window.__publishState = Object.assign(
-              { status: msg.payload && msg.payload.success ? 'success' : 'error' },
+              {
+                status:
+                  msg.payload && msg.payload.success ? 'success' : 'error',
+              },
               msg.payload || {},
             );
             if (!msg.payload || !msg.payload.success) {
@@ -694,11 +715,100 @@
           normalizedJson = '';
           normalizedApplied = false;
           lastCatalogBaseName = '';
+          resetRunnerPublishMeta();
           renderSummary(null, []);
           if (componentTableBody) {
             componentTableBody.innerHTML =
               '<tr><td colspan="6">Данных пока нет</td></tr>';
           }
+        }
+
+        function getRunnerPublishMetaFromDom() {
+          if (!runnerPublishMeta) return null;
+
+          var fileName = runnerPublishMeta.getAttribute('data-file-name') || '';
+          var catalogBaseName =
+            runnerPublishMeta.getAttribute('data-catalog-base-name') || '';
+          var pageName = runnerPublishMeta.getAttribute('data-page-name') || '';
+          var kind = runnerPublishMeta.getAttribute('data-kind') || '';
+          var fileKey = runnerPublishMeta.getAttribute('data-file-key') || '';
+          var figmaLink =
+            runnerPublishMeta.getAttribute('data-figma-link') || '';
+          var ready = runnerPublishMeta.getAttribute('data-ready') === 'true';
+
+          return {
+            fileName: fileName,
+            catalogBaseName: catalogBaseName,
+            meta: {
+              pageName: pageName,
+              kind: kind,
+              fileKey: fileKey,
+              figmaLink: figmaLink,
+            },
+            readyToPublish: ready,
+          };
+        }
+
+        function resetRunnerPublishMeta() {
+          window.__runnerPublishPayload = null;
+
+          if (catalogFileName) {
+            catalogFileName.textContent = '—';
+          }
+
+          if (runnerPublishMeta) {
+            runnerPublishMeta.setAttribute('data-ready', 'false');
+            runnerPublishMeta.setAttribute('data-file-name', '');
+            runnerPublishMeta.setAttribute('data-catalog-base-name', '');
+            runnerPublishMeta.setAttribute('data-page-name', '');
+            runnerPublishMeta.setAttribute('data-kind', '');
+            runnerPublishMeta.setAttribute('data-file-key', '');
+            runnerPublishMeta.setAttribute('data-figma-link', '');
+          }
+        }
+
+        function syncRunnerPublishMeta(payload) {
+          var safePayload = payload || {};
+          var meta = safePayload.meta || {};
+          var fileName = safePayload.fileName || '';
+          var catalogBaseName = safePayload.catalogBaseName || '';
+          var pageName = meta.pageName || '';
+          var kind = meta.kind || '';
+          var fileKey = meta.fileKey || '';
+          var figmaLink = meta.figmaLink || '';
+          var ready = Boolean(fileName);
+
+          window.__runnerPublishPayload = {
+            fileName: fileName,
+            catalogBaseName: catalogBaseName,
+            meta: meta,
+            readyToPublish: ready,
+          };
+
+          if (catalogFileName) {
+            catalogFileName.textContent = fileName || '—';
+          }
+
+          if (runnerPublishMeta) {
+            runnerPublishMeta.setAttribute(
+              'data-ready',
+              ready ? 'true' : 'false',
+            );
+            runnerPublishMeta.setAttribute('data-file-name', fileName);
+            runnerPublishMeta.setAttribute(
+              'data-catalog-base-name',
+              catalogBaseName,
+            );
+            runnerPublishMeta.setAttribute('data-page-name', pageName);
+            runnerPublishMeta.setAttribute('data-kind', kind);
+            runnerPublishMeta.setAttribute('data-file-key', fileKey);
+            runnerPublishMeta.setAttribute('data-figma-link', figmaLink);
+          }
+
+          console.log(
+            '[UI] syncRunnerPublishMeta:',
+            window.__runnerPublishPayload,
+          );
         }
 
         function renderExportResult(payload) {
@@ -709,15 +819,22 @@
             payloadKeys: payload ? Object.keys(payload) : 'payload-is-null',
             hasJson: !!payload?.json,
           });
-          console.log('[UI] full payload structure:', JSON.stringify({
-            mode: payload?.mode,
-            pageName: payload?.pageName,
-            progress: payload?.progress,
-            data: payload?.data ? {
-              meta: payload.data.meta,
-              components: payload.data.components ? payload.data.components.length + ' items' : 'none',
-            } : 'no data',
-          }));
+          console.log(
+            '[UI] full payload structure:',
+            JSON.stringify({
+              mode: payload?.mode,
+              pageName: payload?.pageName,
+              progress: payload?.progress,
+              data: payload?.data
+                ? {
+                    meta: payload.data.meta,
+                    components: payload.data.components
+                      ? payload.data.components.length + ' items'
+                      : 'none',
+                  }
+                : 'no data',
+            }),
+          );
           window.__lastExportPayload = payload;
           lastExportData = payload && payload.data ? payload.data : null;
           normalizeCatalogOutput(payload.data || null);
@@ -758,57 +875,82 @@
                 payload.data.meta &&
                 payload.data.meta.fileName) ||
               'library';
-            console.log('[UI] paged meta:', { pageLabel: pageLabel, libraryLabel: libraryLabel });
+            console.log('[UI] paged meta:', {
+              pageLabel: pageLabel,
+              libraryLabel: libraryLabel,
+            });
             lastDownloadMeta = { library: libraryLabel, fileName: pageLabel };
             lastCatalogBaseName = resolveCatalogBaseName(
               lastDownloadMeta,
               pageLabel,
             );
-            console.log('[UI] paged: set lastDownloadMeta and lastCatalogBaseName');
+            console.log(
+              '[UI] paged: set lastDownloadMeta and lastCatalogBaseName',
+            );
           } else if (payload && payload.data) {
-            console.log('[UI] processing non-paged result, determining meta...');
+            console.log(
+              '[UI] processing non-paged result, determining meta...',
+            );
             lastDownloadMeta = {
               library: payload.data.meta?.library,
               fileName: payload.data.meta?.fileName,
             };
-            console.log('[UI] non-paged meta:', { library: lastDownloadMeta.library, fileName: lastDownloadMeta.fileName });
+            console.log('[UI] non-paged meta:', {
+              library: lastDownloadMeta.library,
+              fileName: lastDownloadMeta.fileName,
+            });
             lastCatalogBaseName = resolveCatalogBaseName(
               lastDownloadMeta,
               payload.data.meta?.fileName || 'export',
             );
-            console.log('[UI] non-paged: set lastDownloadMeta and lastCatalogBaseName');
+            console.log(
+              '[UI] non-paged: set lastDownloadMeta and lastCatalogBaseName',
+            );
           } else {
-            console.log('[UI] renderExportResult: no payload.mode===paged and no payload.data - skipping metadata setup');
+            console.log(
+              '[UI] renderExportResult: no payload.mode===paged and no payload.data - skipping metadata setup',
+            );
           }
 
-          console.log('[UI] BEFORE setting __runnerPublishPayload, getting figmaSourceMeta...');
+          console.log(
+            '[UI] BEFORE setting __runnerPublishPayload, getting figmaSourceMeta...',
+          );
           var figmaSourceMeta = getCurrentFigmaSourceMeta();
-          console.log('[UI] figmaSourceMeta:', { fileKey: figmaSourceMeta?.fileKey, figmaLink: figmaSourceMeta?.figmaLink });
-          
+          console.log('[UI] figmaSourceMeta:', {
+            fileKey: figmaSourceMeta?.fileKey,
+            figmaLink: figmaSourceMeta?.figmaLink,
+          });
+
           console.log('[UI] getting catalogBaseName...');
           var catalogBaseName = getCurrentCatalogBaseName();
           console.log('[UI] catalogBaseName:', catalogBaseName);
-          
-          console.log('[UI] SETTING window.__runnerPublishPayload...');
-          window.__runnerPublishPayload = {
+
+          console.log('[UI] syncing publish payload...');
+          syncRunnerPublishMeta({
             fileName: catalogBaseName + '.json',
+            catalogBaseName: catalogBaseName,
             meta: Object.assign({}, lastDownloadMeta, {
               kind: 'components',
               fileKey: figmaSourceMeta.fileKey,
               figmaLink: figmaSourceMeta.figmaLink,
               pageName:
-                lastDownloadMeta && typeof lastDownloadMeta.fileName === 'string'
+                lastDownloadMeta &&
+                typeof lastDownloadMeta.fileName === 'string'
                   ? lastDownloadMeta.fileName
                   : '',
             }),
-          };
-          console.log('[UI] __runnerPublishPayload SET:', {
+          });
+          console.log('[UI] publish payload synced:', {
             catalogBaseName: catalogBaseName,
             fileName: window.__runnerPublishPayload.fileName,
             lastDownloadMeta: lastDownloadMeta,
             pageName: window.__runnerPublishPayload.meta.pageName,
+            readyToPublish: window.__runnerPublishPayload.readyToPublish,
           });
-          console.log('[UI] window.__runnerPublishPayload check:', window.__runnerPublishPayload);
+          console.log(
+            '[UI] window.__runnerPublishPayload check:',
+            window.__runnerPublishPayload,
+          );
 
           var exportData = payload.data || {};
           var components = Array.isArray(exportData.components)
@@ -1734,10 +1876,16 @@
 
         function getCurrentCatalogBaseName() {
           if (lastCatalogBaseName) {
-            console.log('[UI] getCurrentCatalogBaseName: returning cached', lastCatalogBaseName);
+            console.log(
+              '[UI] getCurrentCatalogBaseName: returning cached',
+              lastCatalogBaseName,
+            );
             return lastCatalogBaseName;
           }
-          console.log('[UI] getCurrentCatalogBaseName: no cache, calling resolveCatalogBaseName with lastDownloadMeta:', lastDownloadMeta);
+          console.log(
+            '[UI] getCurrentCatalogBaseName: no cache, calling resolveCatalogBaseName with lastDownloadMeta:',
+            lastDownloadMeta,
+          );
           return resolveCatalogBaseName(
             lastDownloadMeta,
             lastDownloadMeta && lastDownloadMeta.fileName
@@ -1785,31 +1933,31 @@
             if (!lastTokensJson) {
               return { error: 'Сначала соберите токены' };
             }
-          return {
-            json: lastTokensJson,
-            meta: Object.assign({}, lastTokensMeta, {
-              kind: 'tokens',
-              fileKey: figmaSourceMeta.fileKey,
-              figmaLink: figmaSourceMeta.figmaLink,
-            }),
-            fileName: getTokensExportBaseName() + '.json',
-          };
-        }
+            return {
+              json: lastTokensJson,
+              meta: Object.assign({}, lastTokensMeta, {
+                kind: 'tokens',
+                fileKey: figmaSourceMeta.fileKey,
+                figmaLink: figmaSourceMeta.figmaLink,
+              }),
+              fileName: getTokensExportBaseName() + '.json',
+            };
+          }
 
           if (activeTab === 'styles') {
             if (!lastStylesJson) {
               return { error: 'Сначала соберите стили' };
             }
-          return {
-            json: lastStylesJson,
-            meta: Object.assign({}, lastStylesMeta, {
-              kind: 'styles',
-              fileKey: figmaSourceMeta.fileKey,
-              figmaLink: figmaSourceMeta.figmaLink,
-            }),
-            fileName: getStylesExportBaseName() + '.json',
-          };
-        }
+            return {
+              json: lastStylesJson,
+              meta: Object.assign({}, lastStylesMeta, {
+                kind: 'styles',
+                fileKey: figmaSourceMeta.fileKey,
+                figmaLink: figmaSourceMeta.figmaLink,
+              }),
+              fileName: getStylesExportBaseName() + '.json',
+            };
+          }
 
           var content = normalizedApplied
             ? normalizedJson
@@ -1824,7 +1972,8 @@
               fileKey: figmaSourceMeta.fileKey,
               figmaLink: figmaSourceMeta.figmaLink,
               pageName:
-                lastDownloadMeta && typeof lastDownloadMeta.fileName === 'string'
+                lastDownloadMeta &&
+                typeof lastDownloadMeta.fileName === 'string'
                   ? lastDownloadMeta.fileName
                   : '',
             }),
@@ -1878,7 +2027,8 @@
           pendingPublishPayload = payload;
           window.__publishState = {
             status: 'await-token',
-            catalogName: payload && payload.catalogName ? payload.catalogName : '',
+            catalogName:
+              payload && payload.catalogName ? payload.catalogName : '',
           };
           if (githubTokenDialog) {
             githubTokenDialog.classList.add('open');
