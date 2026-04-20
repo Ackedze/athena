@@ -702,10 +702,22 @@
         }
 
         function renderExportResult(payload) {
-          console.log('[UI] renderExportResult called', {
+          console.log('[UI] renderExportResult called with payload:', {
             mode: payload?.mode,
+            hasData: !!payload?.data,
             componentsCount: payload?.data?.components?.length,
+            payloadKeys: payload ? Object.keys(payload) : 'payload-is-null',
+            hasJson: !!payload?.json,
           });
+          console.log('[UI] full payload structure:', JSON.stringify({
+            mode: payload?.mode,
+            pageName: payload?.pageName,
+            progress: payload?.progress,
+            data: payload?.data ? {
+              meta: payload.data.meta,
+              components: payload.data.components ? payload.data.components.length + ' items' : 'none',
+            } : 'no data',
+          }));
           window.__lastExportPayload = payload;
           lastExportData = payload && payload.data ? payload.data : null;
           normalizeCatalogOutput(payload.data || null);
