@@ -730,6 +730,7 @@
           }
 
           if (payload && payload.mode === 'paged') {
+            console.log('[UI] processing paged result, determining meta...');
             var pageLabel =
               payload.pageName ||
               (payload.data &&
@@ -745,24 +746,38 @@
                 payload.data.meta &&
                 payload.data.meta.fileName) ||
               'library';
+            console.log('[UI] paged meta:', { pageLabel: pageLabel, libraryLabel: libraryLabel });
             lastDownloadMeta = { library: libraryLabel, fileName: pageLabel };
             lastCatalogBaseName = resolveCatalogBaseName(
               lastDownloadMeta,
               pageLabel,
             );
+            console.log('[UI] paged: set lastDownloadMeta and lastCatalogBaseName');
           } else if (payload && payload.data) {
+            console.log('[UI] processing non-paged result, determining meta...');
             lastDownloadMeta = {
               library: payload.data.meta?.library,
               fileName: payload.data.meta?.fileName,
             };
+            console.log('[UI] non-paged meta:', { library: lastDownloadMeta.library, fileName: lastDownloadMeta.fileName });
             lastCatalogBaseName = resolveCatalogBaseName(
               lastDownloadMeta,
               payload.data.meta?.fileName || 'export',
             );
+            console.log('[UI] non-paged: set lastDownloadMeta and lastCatalogBaseName');
+          } else {
+            console.log('[UI] renderExportResult: no payload.mode===paged and no payload.data - skipping metadata setup');
           }
 
+          console.log('[UI] BEFORE setting __runnerPublishPayload, getting figmaSourceMeta...');
           var figmaSourceMeta = getCurrentFigmaSourceMeta();
+          console.log('[UI] figmaSourceMeta:', { fileKey: figmaSourceMeta?.fileKey, figmaLink: figmaSourceMeta?.figmaLink });
+          
+          console.log('[UI] getting catalogBaseName...');
           var catalogBaseName = getCurrentCatalogBaseName();
+          console.log('[UI] catalogBaseName:', catalogBaseName);
+          
+          console.log('[UI] SETTING window.__runnerPublishPayload...');
           window.__runnerPublishPayload = {
             fileName: catalogBaseName + '.json',
             meta: Object.assign({}, lastDownloadMeta, {
@@ -781,6 +796,7 @@
             lastDownloadMeta: lastDownloadMeta,
             pageName: window.__runnerPublishPayload.meta.pageName,
           });
+          console.log('[UI] window.__runnerPublishPayload check:', window.__runnerPublishPayload);
 
           var exportData = payload.data || {};
           var components = Array.isArray(exportData.components)
