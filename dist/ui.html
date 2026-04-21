@@ -933,11 +933,7 @@
               kind: 'components',
               fileKey: figmaSourceMeta.fileKey,
               figmaLink: figmaSourceMeta.figmaLink,
-              pageName:
-                lastDownloadMeta &&
-                typeof lastDownloadMeta.fileName === 'string'
-                  ? lastDownloadMeta.fileName
-                  : '',
+              pageName: catalogBaseName,
             }),
           });
           console.log('[UI] publish payload synced:', {
@@ -1971,11 +1967,7 @@
               kind: 'components',
               fileKey: figmaSourceMeta.fileKey,
               figmaLink: figmaSourceMeta.figmaLink,
-              pageName:
-                lastDownloadMeta &&
-                typeof lastDownloadMeta.fileName === 'string'
-                  ? lastDownloadMeta.fileName
-                  : '',
+              pageName: getCurrentCatalogBaseName(),
             }),
             fileName: getCurrentCatalogBaseName() + '.json',
           };
