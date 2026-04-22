@@ -187,31 +187,47 @@ interface ReferenceCatalogList {
 }
 
 function stringToBase64(str: string): string {
+  const bytes =
+    typeof TextEncoder !== 'undefined'
+      ? new TextEncoder().encode(str)
+      : Uint8Array.from(
+          unescape(encodeURIComponent(str))
+            .split('')
+            .map((char) => char.charCodeAt(0)),
+        );
+
   try {
     if (typeof btoa !== 'undefined') {
-      return btoa(unescape(encodeURIComponent(str)));
+      let binary = '';
+      const chunkSize = 32768;
+      for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
     }
   } catch (error) {
     void error;
     // Fall back to manual encoding below.
   }
 
-  const chars =
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   let result = '';
   let i = 0;
 
-  while (i < str.length) {
-    const a = str.charCodeAt(i++);
-    const b = i < str.length ? str.charCodeAt(i++) : 0;
-    const c = i < str.length ? str.charCodeAt(i++) : 0;
+  while (i < bytes.length) {
+    const a = bytes[i++];
+    const hasB = i < bytes.length;
+    const b = hasB ? bytes[i++] : 0;
+    const hasC = i < bytes.length;
+    const c = hasC ? bytes[i++] : 0;
 
     const bitmap = (a << 16) | (b << 8) | c;
 
     result += chars.charAt((bitmap >> 18) & 63);
     result += chars.charAt((bitmap >> 12) & 63);
-    result += i - 2 < str.length ? chars.charAt((bitmap >> 6) & 63) : '=';
-    result += i - 1 < str.length ? chars.charAt(bitmap & 63) : '=';
+    result += hasB ? chars.charAt((bitmap >> 6) & 63) : '=';
+    result += hasC ? chars.charAt(bitmap & 63) : '=';
   }
 
   return result;
@@ -227,35 +243,50 @@ function buildGitHubAccessError(): string {
 
 function base64ToString(value: string): string {
   const normalized = value.replace(/\s+/g, '');
+  let bytes: Uint8Array;
+
   if (typeof atob !== 'undefined') {
-    return decodeURIComponent(escape(atob(normalized)));
+    const binary = atob(normalized);
+    bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  } else {
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    const decodedBytes: number[] = [];
+    let i = 0;
+
+    while (i < normalized.length) {
+      const enc1 = chars.indexOf(normalized.charAt(i++));
+      const enc2 = chars.indexOf(normalized.charAt(i++));
+      const enc3 = chars.indexOf(normalized.charAt(i++));
+      const enc4 = chars.indexOf(normalized.charAt(i++));
+
+      const chr1 = (enc1 << 2) | (enc2 >> 4);
+      const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+      const chr3 = ((enc3 & 3) << 6) | enc4;
+
+      decodedBytes.push(chr1);
+      if (enc3 !== 64) {
+        decodedBytes.push(chr2);
+      }
+      if (enc4 !== 64) {
+        decodedBytes.push(chr3);
+      }
+    }
+
+    bytes = Uint8Array.from(decodedBytes);
   }
 
-  const chars =
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-  let result = '';
-  let i = 0;
-
-  while (i < normalized.length) {
-    const enc1 = chars.indexOf(normalized.charAt(i++));
-    const enc2 = chars.indexOf(normalized.charAt(i++));
-    const enc3 = chars.indexOf(normalized.charAt(i++));
-    const enc4 = chars.indexOf(normalized.charAt(i++));
-
-    const chr1 = (enc1 << 2) | (enc2 >> 4);
-    const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
-    const chr3 = ((enc3 & 3) << 6) | enc4;
-
-    result += String.fromCharCode(chr1);
-    if (enc3 !== 64) {
-      result += String.fromCharCode(chr2);
-    }
-    if (enc4 !== 64) {
-      result += String.fromCharCode(chr3);
-    }
+  if (typeof TextDecoder !== 'undefined') {
+    return new TextDecoder().decode(bytes);
   }
 
-  return decodeURIComponent(escape(result));
+  let binary = '';
+  const chunkSize = 32768;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return decodeURIComponent(escape(binary));
 }
 
 function extractFigmaFileKey(link: string | undefined): string | undefined {
