@@ -8,7 +8,9 @@ Figma-плагин для сбора и публикации JSON-артефак
 - Показывать таблицу компонентов и нормализованный catalog JSON для текущей собранной страницы.
 - Экспортировать Variables API в JSON.
 - Экспортировать локальные стили в JSON.
+- Работать с reference-файлом нового формата `libraries[].catalogs[]`.
 - Публиковать компоненты, токены и стили напрямую в GitHub-репозиторий `ackedze/design-system_ab`.
+- Отдавать runner-friendly publish context через DOM marker для automation-runner.
 
 ## Ключевые файлы
 
@@ -55,8 +57,13 @@ code.ts -> UI
 
 1. UI определяет активную вкладку: `components`, `tokens` или `styles`.
 2. UI формирует payload с тем же именем файла, которое используется для скачивания.
-3. UI показывает диалог ввода GitHub token только если токен ещё не сохранён в памяти текущей сессии.
-4. `code.ts` публикует JSON через GitHub Contents API в `catalogs/{fileName}.json`.
+3. Для `components` имя файла совпадает с именем текущей страницы Figma.
+4. Для `tokens` и `styles` имя файла строится от имени библиотеки, чтобы совпадать с reference entry вроде `tokens/Spacing.json` или `styles/009 _ Shadow BlueTint Light.json`.
+5. UI синхронизирует publish context в DOM через marker `#runner-publish-meta` и видимое имя файла `#catalog-file-name`.
+6. Runner читает эти значения из iframe Athena и использует их как source of truth для автоматической публикации.
+7. UI показывает диалог ввода GitHub token только если токен ещё не сохранён в памяти текущей сессии.
+8. `code.ts` публикует JSON через GitHub Contents API в `catalogs/{fileName}.json`.
+9. Publish transport использует UTF-8-safe base64-кодирование, поэтому кириллица и другие non-ASCII строки не должны повреждаться при записи в GitHub.
 
 ## Использование
 
@@ -66,6 +73,23 @@ code.ts -> UI
 4. На вкладках `Tokens` и `Styles` используйте соответствующие кнопки сбора.
 5. Для скачивания используйте локальные кнопки `Скачать JSON`.
 6. Для публикации используйте общую кнопку `Опубликовать` справа сверху.
+7. Если Athena запускается из `figma-automation-runner`, runner сам переключает вкладки, инициирует сбор и использует DOM marker плагина для сопоставления с reference entry.
+
+## Интеграция с runner
+
+Athena подготовлена для автоматического сценария runner:
+
+- вкладки размечены как `data-tab="components" | "tokens" | "styles"`
+- сбор запускается кнопками `#export-page-btn`, `#collect-tokens-btn`, `#collect-styles-btn`
+- текущий публикуемый файл виден в `#catalog-file-name`
+- publish context синхронизируется в `#runner-publish-meta`
+- после каждого сбора runner может проверить готовность publish без обращения к внутреннему JS-состоянию плагина
+
+Это позволяет automation-runner:
+
+- отличать `components`, `tokens` и `styles`
+- матчить publish с `referenceSourcesMVP.json` нового формата
+- публиковать только те каталоги, которые реально указаны в reference для текущей библиотеки
 
 ## Сборка
 
