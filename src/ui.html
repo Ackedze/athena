@@ -503,6 +503,10 @@
         });
 
         bindButton(collectTokensBtn, function () {
+          updateTabState('tokens');
+          lastTokensJson = '';
+          lastTokensMeta = null;
+          resetRunnerPublishMeta();
           console.log('[UI] collect tokens button clicked');
           parent.postMessage(
             { pluginMessage: { type: 'collect-tokens' } },
@@ -511,6 +515,11 @@
         });
 
         bindButton(collectStylesBtn, function () {
+          updateTabState('styles');
+          lastStylesJson = '';
+          lastStylesMeta = null;
+          stylesCollected = false;
+          resetRunnerPublishMeta();
           console.log('[UI] collect styles button clicked');
           parent.postMessage(
             { pluginMessage: { type: 'collect-styles' } },
@@ -593,6 +602,9 @@
             lastTokensMeta = payload.data.meta || null;
             var tokenEntries = buildTokenTableEntries(payload.data);
             renderTokens(tokenEntries);
+            if (activeTab === 'tokens') {
+              syncRunnerPublishMetaForActiveTab();
+            }
           }
           if (msg.type === 'collect-styles-result') {
             var payload = msg.payload || {};
@@ -602,6 +614,9 @@
             var styleEntries = payload.data.styles || [];
             stylesCollected = true;
             renderStyles(styleEntries, true);
+            if (activeTab === 'styles') {
+              syncRunnerPublishMetaForActiveTab();
+            }
           }
           if (msg.type === 'publish-result') {
             console.log('[UI] publish result:', msg.payload);
@@ -638,6 +653,7 @@
           if (stylesTab) {
             stylesTab.classList.toggle('active', target === 'styles');
           }
+          syncRunnerPublishMetaForActiveTab();
         }
 
         function bindButton(button, handler) {
@@ -926,22 +942,22 @@
           console.log('[UI] catalogBaseName:', catalogBaseName);
 
           console.log('[UI] syncing publish payload...');
-          syncRunnerPublishMeta({
-            fileName: catalogBaseName + '.json',
-            catalogBaseName: catalogBaseName,
-            meta: Object.assign({}, lastDownloadMeta, {
-              kind: 'components',
-              fileKey: figmaSourceMeta.fileKey,
-              figmaLink: figmaSourceMeta.figmaLink,
-              pageName: catalogBaseName,
-            }),
-          });
+          var syncedPublishDescriptor = syncRunnerPublishMetaForActiveTab();
+          var currentRunnerPublishPayload = window.__runnerPublishPayload || null;
           console.log('[UI] publish payload synced:', {
             catalogBaseName: catalogBaseName,
-            fileName: window.__runnerPublishPayload.fileName,
+            fileName: currentRunnerPublishPayload
+              ? currentRunnerPublishPayload.fileName
+              : '',
             lastDownloadMeta: lastDownloadMeta,
-            pageName: window.__runnerPublishPayload.meta.pageName,
-            readyToPublish: window.__runnerPublishPayload.readyToPublish,
+            pageName: currentRunnerPublishPayload
+              ? currentRunnerPublishPayload.meta.pageName
+              : '',
+            readyToPublish: Boolean(
+              currentRunnerPublishPayload &&
+                currentRunnerPublishPayload.readyToPublish,
+            ),
+            syncedPublishDescriptor: syncedPublishDescriptor,
           });
           console.log(
             '[UI] window.__runnerPublishPayload check:',
@@ -1891,11 +1907,30 @@
         }
 
         function getTokensExportBaseName() {
-          return resolveScopedExportBaseName(lastTokensMeta, 'tokens');
+          return resolveMetaBaseName(lastTokensMeta, 'tokens');
         }
 
         function getStylesExportBaseName() {
-          return resolveScopedExportBaseName(lastStylesMeta, 'styles');
+          return resolveMetaBaseName(lastStylesMeta, 'styles');
+        }
+
+        function resolveMetaBaseName(meta, fallback) {
+          return resolveCatalogBaseName(
+            {
+              library: meta && meta.library ? meta.library : 'library',
+              fileName:
+                meta && meta.fileName
+                  ? meta.fileName
+                  : meta && meta.library
+                    ? meta.library
+                    : fallback,
+            },
+            meta && meta.fileName
+              ? meta.fileName
+              : meta && meta.library
+                ? meta.library
+                : fallback,
+          );
         }
 
         function resolveScopedExportBaseName(meta, scopeLabel) {
@@ -1923,20 +1958,83 @@
           };
         }
 
-        function getPublishPayload() {
+        function getPublishDescriptorForTab(targetTab) {
           var figmaSourceMeta = getCurrentFigmaSourceMeta();
-          if (activeTab === 'tokens') {
-            if (!lastTokensJson) {
-              return { error: 'Сначала соберите токены' };
+
+          if (targetTab === 'tokens') {
+            if (!lastTokensMeta) {
+              return null;
             }
+            var tokensBaseName = getTokensExportBaseName();
             return {
-              json: lastTokensJson,
+              fileName: tokensBaseName + '.json',
+              catalogBaseName: tokensBaseName,
               meta: Object.assign({}, lastTokensMeta, {
                 kind: 'tokens',
                 fileKey: figmaSourceMeta.fileKey,
                 figmaLink: figmaSourceMeta.figmaLink,
+                pageName: tokensBaseName,
               }),
-              fileName: getTokensExportBaseName() + '.json',
+            };
+          }
+
+          if (targetTab === 'styles') {
+            if (!lastStylesMeta) {
+              return null;
+            }
+            var stylesBaseName = getStylesExportBaseName();
+            return {
+              fileName: stylesBaseName + '.json',
+              catalogBaseName: stylesBaseName,
+              meta: Object.assign({}, lastStylesMeta, {
+                kind: 'styles',
+                fileKey: figmaSourceMeta.fileKey,
+                figmaLink: figmaSourceMeta.figmaLink,
+                pageName: stylesBaseName,
+              }),
+            };
+          }
+
+          if (!lastCatalogBaseName && !lastDownloadMeta) {
+            return null;
+          }
+
+          var componentsBaseName = getCurrentCatalogBaseName();
+          return {
+            fileName: componentsBaseName + '.json',
+            catalogBaseName: componentsBaseName,
+            meta: Object.assign({}, lastDownloadMeta, {
+              kind: 'components',
+              fileKey: figmaSourceMeta.fileKey,
+              figmaLink: figmaSourceMeta.figmaLink,
+              pageName: componentsBaseName,
+            }),
+          };
+        }
+
+        function syncRunnerPublishMetaForActiveTab() {
+          var descriptor = getPublishDescriptorForTab(activeTab);
+          if (!descriptor || !descriptor.fileName) {
+            resetRunnerPublishMeta();
+            return null;
+          }
+          syncRunnerPublishMeta(descriptor);
+          return descriptor;
+        }
+
+        function getPublishPayload() {
+          var descriptor = getPublishDescriptorForTab(activeTab);
+          if (activeTab === 'tokens') {
+            if (!lastTokensJson) {
+              return { error: 'Сначала соберите токены' };
+            }
+            if (!descriptor) {
+              return { error: 'Не удалось подготовить метаданные токенов' };
+            }
+            return {
+              json: lastTokensJson,
+              meta: descriptor.meta,
+              fileName: descriptor.fileName,
             };
           }
 
@@ -1944,14 +2042,13 @@
             if (!lastStylesJson) {
               return { error: 'Сначала соберите стили' };
             }
+            if (!descriptor) {
+              return { error: 'Не удалось подготовить метаданные стилей' };
+            }
             return {
               json: lastStylesJson,
-              meta: Object.assign({}, lastStylesMeta, {
-                kind: 'styles',
-                fileKey: figmaSourceMeta.fileKey,
-                figmaLink: figmaSourceMeta.figmaLink,
-              }),
-              fileName: getStylesExportBaseName() + '.json',
+              meta: descriptor.meta,
+              fileName: descriptor.fileName,
             };
           }
 
@@ -1961,15 +2058,13 @@
           if (!content) {
             return { error: 'Сначала соберите компоненты' };
           }
+          if (!descriptor) {
+            return { error: 'Не удалось подготовить метаданные компонентов' };
+          }
           return {
             json: content,
-            meta: Object.assign({}, lastDownloadMeta, {
-              kind: 'components',
-              fileKey: figmaSourceMeta.fileKey,
-              figmaLink: figmaSourceMeta.figmaLink,
-              pageName: getCurrentCatalogBaseName(),
-            }),
-            fileName: getCurrentCatalogBaseName() + '.json',
+            meta: descriptor.meta,
+            fileName: descriptor.fileName,
           };
         }
 
