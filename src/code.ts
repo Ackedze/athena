@@ -193,6 +193,19 @@ interface ReferenceCatalogList {
   libraries?: ReferenceLibrary[];
 }
 
+interface ReferenceCatalogFile {
+  list: ReferenceCatalogList | null;
+  sha?: string;
+}
+
+interface PublishFileResolution {
+  filePath: string;
+  referenceUpdated: boolean;
+  referencePath: string;
+  referenceList?: ReferenceCatalogList;
+  referenceSha?: string;
+}
+
 function stringToBase64(str: string): string {
   const bytes =
     typeof TextEncoder !== 'undefined'
@@ -338,6 +351,38 @@ function normalizeRepoPath(value: string): string {
   return value.replace(/^\/+/, '').trim();
 }
 
+function readString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function stripJsonExtension(value: string): string {
+  return value.replace(/\.json$/i, '');
+}
+
+function sanitizeRepoFileName(value: string, fallback: string): string {
+  const normalized = stripJsonExtension(getPathBaseName(value))
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return normalized || fallback;
+}
+
+function getRepoDirectory(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  const normalized = normalizeRepoPath(value).replace(/\\/g, '/');
+  const slashIndex = normalized.lastIndexOf('/');
+  return slashIndex === -1 ? '' : normalized.slice(0, slashIndex);
+}
+
 function getManifestPublishRoot(): string {
   const normalizedPath = normalizeRepoPath(REFERENCE_SOURCES_PATH);
   const lastSlashIndex = normalizedPath.lastIndexOf('/');
@@ -469,9 +514,16 @@ function normalizeReferenceCatalogEntries(
   return flatCatalogs.concat(libraryCatalogs);
 }
 
-async function fetchReferenceCatalogList(
+function createEmptyReferenceCatalogList(): ReferenceCatalogList {
+  return {
+    baseUrl: `https://${GITHUB_OWNER}.github.io/${GITHUB_REPO}/JSONS/`,
+    libraries: [],
+  };
+}
+
+async function fetchReferenceCatalogFile(
   githubToken: string,
-): Promise<ReferenceCatalogList | null> {
+): Promise<ReferenceCatalogFile> {
   const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${REFERENCE_SOURCES_PATH}`;
   const response = await fetch(apiUrl, {
     headers: {
@@ -481,7 +533,7 @@ async function fetchReferenceCatalogList(
   });
 
   if (response.status === 404) {
-    return null;
+    return { list: null };
   }
   if (response.status === 401) {
     throw new Error(buildGitHubAuthError());
@@ -495,18 +547,243 @@ async function fetchReferenceCatalogList(
     );
   }
 
-  const payload = (await response.json()) as { content?: string };
+  const payload = (await response.json()) as { content?: string; sha?: string };
   if (!payload.content) {
-    return null;
+    return { list: null, sha: payload.sha };
   }
 
-  return JSON.parse(base64ToString(payload.content)) as ReferenceCatalogList;
+  return {
+    list: JSON.parse(base64ToString(payload.content)) as ReferenceCatalogList,
+    sha: payload.sha,
+  };
+}
+
+async function putReferenceCatalogList(
+  referenceList: ReferenceCatalogList,
+  sha: string | undefined,
+  githubToken: string,
+  catalogName: string,
+): Promise<void> {
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${REFERENCE_SOURCES_PATH}`;
+  const requestBody: any = {
+    message: `Register design system catalog: ${stripJsonExtension(catalogName)}`,
+    content: stringToBase64(`${JSON.stringify(referenceList, null, 2)}\n`),
+  };
+
+  if (sha) {
+    requestBody.sha = sha;
+  }
+
+  const response = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    let errorMessage = errorData.message || response.statusText;
+
+    if (response.status === 401) {
+      errorMessage = buildGitHubAuthError();
+    } else if (response.status === 403) {
+      errorMessage = buildGitHubAccessError();
+    } else if (response.status === 409) {
+      errorMessage =
+        'referenceSourcesMVP.json был изменён параллельно. Повторите публикацию, чтобы Athena подтянула свежую версию.';
+    }
+
+    throw new Error(`Не удалось обновить referenceSourcesMVP.json: ${errorMessage}`);
+  }
+}
+
+function findReferenceLibrary(
+  referenceList: ReferenceCatalogList,
+  target: {
+    catalogName: string;
+    fileKey?: string;
+    meta?: PublishMeta;
+  },
+): ReferenceLibrary {
+  if (!Array.isArray(referenceList.libraries)) {
+    referenceList.libraries = [];
+  }
+
+  const libraryName =
+    readString(target.meta?.library) ||
+    readString(target.meta?.fileName) ||
+    sanitizeRepoFileName(target.catalogName, 'library');
+  const normalizedLibraryName = normalizeMatchKey(libraryName);
+
+  const libraryByFileKey = referenceList.libraries.find((library) => {
+    const libraryFileKey = resolveReferenceSourceFileKey(library.source);
+    return (
+      libraryFileKey &&
+      target.fileKey &&
+      normalizeMatchKey(libraryFileKey) === normalizeMatchKey(target.fileKey)
+    );
+  });
+  if (libraryByFileKey) {
+    return libraryByFileKey;
+  }
+
+  const libraryByName = referenceList.libraries.find(
+    (library) => normalizeMatchKey(library.name) === normalizedLibraryName,
+  );
+  if (libraryByName) {
+    return libraryByName;
+  }
+
+  const source: ReferenceCatalogSource = {};
+  const figmaLink = readString(target.meta?.figmaLink);
+  if (figmaLink) {
+    source.figmaLibLink = figmaLink;
+  }
+  if (target.fileKey) {
+    source.fileKey = target.fileKey;
+  }
+
+  const library: ReferenceLibrary = {
+    name: libraryName,
+    source,
+    catalogs: [],
+  };
+  referenceList.libraries.push(library);
+
+  return library;
+}
+
+function inferCatalogDirectory(
+  library: ReferenceLibrary,
+  kind: PublishArtifactKind,
+): string {
+  if (kind === 'tokens') {
+    return 'tokens';
+  }
+  if (kind === 'styles') {
+    return 'styles';
+  }
+
+  const catalogs = Array.isArray(library.catalogs) ? library.catalogs : [];
+  const directoryCounts: Record<string, number> = {};
+
+  catalogs.forEach((entry) => {
+    const entryKind = entry.source?.kind;
+    if (entryKind !== kind) {
+      return;
+    }
+
+    const directory = getRepoDirectory(entry.path || entry.fileName);
+    if (!directory) {
+      return;
+    }
+
+    directoryCounts[directory] = (directoryCounts[directory] || 0) + 1;
+  });
+
+  let bestDirectory = '';
+  let bestCount = 0;
+  Object.keys(directoryCounts).forEach((directory) => {
+    const count = directoryCounts[directory];
+    if (count > bestCount) {
+      bestDirectory = directory;
+      bestCount = count;
+    }
+  });
+
+  if (bestDirectory) {
+    return bestDirectory;
+  }
+
+  const libraryDirectory = sanitizeRepoFileName(library.name, 'library');
+  return `components/${libraryDirectory}`;
+}
+
+function buildReferenceCatalogEntry(
+  payload: PublishPayload,
+  target: {
+    kind: PublishArtifactKind;
+    fileKey?: string;
+    pageName: string;
+    relativePath: string;
+  },
+): ReferenceCatalogEntry {
+  const source: ReferenceCatalogSource = {
+    kind: target.kind,
+    pageName: target.pageName,
+  };
+
+  const figmaLink = readString(payload.meta?.figmaLink);
+  if (figmaLink) {
+    source.figmaPageLink = figmaLink;
+  }
+  if (target.fileKey) {
+    source.fileKey = target.fileKey;
+  }
+
+  return {
+    fileName: target.relativePath,
+    path: target.relativePath,
+    source,
+  };
+}
+
+function registerReferenceCatalogEntry(
+  referenceList: ReferenceCatalogList,
+  payload: PublishPayload,
+  target: {
+    kind: PublishArtifactKind;
+    fileKey?: string;
+    pageName: string;
+  },
+): ReferenceCatalogEntry {
+  const library = findReferenceLibrary(referenceList, {
+    catalogName: payload.catalogName,
+    fileKey: target.fileKey,
+    meta: payload.meta,
+  });
+
+  if (!Array.isArray(library.catalogs)) {
+    library.catalogs = [];
+  }
+
+  const catalogBaseName = sanitizeRepoFileName(payload.catalogName, 'catalog');
+  const directory = inferCatalogDirectory(library, target.kind);
+  const relativePath = joinRepoPath(directory, `${catalogBaseName}.json`);
+
+  const duplicateEntry = library.catalogs.find(
+    (entry) =>
+      normalizeMatchKey(entry.path) === normalizeMatchKey(relativePath) ||
+      matchesReferenceEntry(entry, {
+        kind: target.kind,
+        catalogName: payload.catalogName,
+        fileKey: target.fileKey,
+        pageName: target.pageName,
+      }),
+  );
+
+  if (duplicateEntry) {
+    return duplicateEntry;
+  }
+
+  const entry = buildReferenceCatalogEntry(payload, {
+    kind: target.kind,
+    fileKey: target.fileKey,
+    pageName: target.pageName,
+    relativePath,
+  });
+  library.catalogs.push(entry);
+  return entry;
 }
 
 async function resolvePublishFilePath(
   payload: PublishPayload,
   githubToken: string,
-): Promise<string> {
+): Promise<PublishFileResolution> {
   const kind = payload.meta?.kind;
   const fileKey = resolveCurrentFileKey(payload.meta);
   const pageName =
@@ -517,15 +794,13 @@ async function resolvePublishFilePath(
       'Не удалось определить тип публикуемого каталога. Для публикации нужен kind.',
     );
   }
-
-  const referenceList = await fetchReferenceCatalogList(githubToken);
-  const referenceEntries = normalizeReferenceCatalogEntries(referenceList);
-  if (!referenceEntries.length) {
-    throw new Error(
-      'referenceSourcesMVP.json недоступен или не содержит каталогов. Публикация остановлена.',
-    );
+  if (kind === 'component-index') {
+    throw new Error('component-index публикуется только как связанный артефакт каталога компонентов.');
   }
 
+  const referenceFile = await fetchReferenceCatalogFile(githubToken);
+  const referenceList = referenceFile.list || createEmptyReferenceCatalogList();
+  const referenceEntries = normalizeReferenceCatalogEntries(referenceList);
   const matchedEntry = referenceEntries.find((entry) =>
     matchesReferenceEntry(entry, {
       kind,
@@ -535,14 +810,34 @@ async function resolvePublishFilePath(
     }),
   );
 
-  if (!matchedEntry?.path) {
-    throw new Error(
-      `В referenceSourcesMVP.json не найден путь для ${payload.catalogName}. Публикация остановлена.`,
-    );
+  let referenceUpdated = false;
+  let resolvedEntry = matchedEntry;
+  if (!resolvedEntry?.path) {
+    resolvedEntry = registerReferenceCatalogEntry(referenceList, payload, {
+      kind,
+      fileKey,
+      pageName: pageName || stripJsonExtension(payload.catalogName),
+    });
+    referenceUpdated = true;
+
+    console.log('[CODE] reference catalog registered:', {
+      catalogName: payload.catalogName,
+      path: resolvedEntry.path,
+      kind,
+      fileKey,
+      pageName,
+    });
   }
 
   const publishRoot = resolvePublishRootFromBaseUrl(referenceList?.baseUrl);
-  return joinRepoPath(publishRoot, matchedEntry.path);
+  const referencePath = resolvedEntry.path;
+  return {
+    filePath: joinRepoPath(publishRoot, referencePath),
+    referenceUpdated,
+    referencePath,
+    referenceList: referenceUpdated ? referenceList : undefined,
+    referenceSha: referenceUpdated ? referenceFile.sha : undefined,
+  };
 }
 
 function buildComponentIndexPath(catalogPath: string): string {
@@ -646,7 +941,8 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     const repo = `${GITHUB_OWNER}/${GITHUB_REPO}`;
     const owner = GITHUB_OWNER;
     const repoName = GITHUB_REPO;
-    const filePath = await resolvePublishFilePath(payload, githubToken);
+    const publishResolution = await resolvePublishFilePath(payload, githubToken);
+    const filePath = publishResolution.filePath;
     const publishTargets = [
       {
         json: payload.json,
@@ -682,6 +978,8 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
       fileKey: resolveCurrentFileKey(payload.meta),
       pageName: payload.meta?.pageName,
       relatedArtifacts: publishTargets.length - 1,
+      referenceUpdated: publishResolution.referenceUpdated,
+      referencePath: publishResolution.referencePath,
     });
 
     const results: Array<{ catalogName: string; url: string }> = [];
@@ -735,11 +1033,25 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
       results.push({ catalogName: target.catalogName, url: result.html_url });
     }
 
+    if (publishResolution.referenceUpdated && publishResolution.referenceList) {
+      await putReferenceCatalogList(
+        publishResolution.referenceList,
+        publishResolution.referenceSha,
+        githubToken,
+        catalogName,
+      );
+      console.log('[CODE] referenceSourcesMVP.json updated:', {
+        catalogName,
+        referencePath: publishResolution.referencePath,
+      });
+    }
+
     const primaryResult = results[0];
     logDebug('publish-catalog-success', {
       catalogName,
       url: primaryResult?.url,
       files: results.length,
+      referenceUpdated: publishResolution.referenceUpdated,
     });
 
     figma.notify(`✓ Опубликовано файлов: ${results.length} в ${repo}`, {
@@ -753,6 +1065,8 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
         catalogName,
         url: primaryResult?.url,
         files: results,
+        referenceUpdated: publishResolution.referenceUpdated,
+        referencePath: publishResolution.referencePath,
       },
     });
   } catch (error) {

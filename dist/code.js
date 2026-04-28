@@ -2023,6 +2023,28 @@
   function normalizeRepoPath(value) {
     return value.replace(/^\/+/, "").trim();
   }
+  function readString(value) {
+    if (typeof value !== "string") {
+      return void 0;
+    }
+    const trimmed = value.trim();
+    return trimmed || void 0;
+  }
+  function stripJsonExtension(value) {
+    return value.replace(/\.json$/i, "");
+  }
+  function sanitizeRepoFileName(value, fallback) {
+    const normalized = stripJsonExtension(getPathBaseName(value)).replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim();
+    return normalized || fallback;
+  }
+  function getRepoDirectory(value) {
+    if (!value) {
+      return "";
+    }
+    const normalized = normalizeRepoPath(value).replace(/\\/g, "/");
+    const slashIndex = normalized.lastIndexOf("/");
+    return slashIndex === -1 ? "" : normalized.slice(0, slashIndex);
+  }
   function getManifestPublishRoot() {
     const normalizedPath = normalizeRepoPath(REFERENCE_SOURCES_PATH);
     const lastSlashIndex = normalizedPath.lastIndexOf("/");
@@ -2109,7 +2131,13 @@
     }
     return flatCatalogs.concat(libraryCatalogs);
   }
-  async function fetchReferenceCatalogList(githubToken) {
+  function createEmptyReferenceCatalogList() {
+    return {
+      baseUrl: `https://${GITHUB_OWNER}.github.io/${GITHUB_REPO}/JSONS/`,
+      libraries: []
+    };
+  }
+  async function fetchReferenceCatalogFile(githubToken) {
     const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${REFERENCE_SOURCES_PATH}`;
     const response = await fetch(apiUrl, {
       headers: {
@@ -2118,7 +2146,7 @@
       }
     });
     if (response.status === 404) {
-      return null;
+      return { list: null };
     }
     if (response.status === 401) {
       throw new Error(buildGitHubAuthError());
@@ -2133,9 +2161,167 @@
     }
     const payload = await response.json();
     if (!payload.content) {
-      return null;
+      return { list: null, sha: payload.sha };
     }
-    return JSON.parse(base64ToString(payload.content));
+    return {
+      list: JSON.parse(base64ToString(payload.content)),
+      sha: payload.sha
+    };
+  }
+  async function putReferenceCatalogList(referenceList, sha, githubToken, catalogName) {
+    const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${REFERENCE_SOURCES_PATH}`;
+    const requestBody = {
+      message: `Register design system catalog: ${stripJsonExtension(catalogName)}`,
+      content: stringToBase64(`${JSON.stringify(referenceList, null, 2)}
+`)
+    };
+    if (sha) {
+      requestBody.sha = sha;
+    }
+    const response = await fetch(apiUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      let errorMessage = errorData.message || response.statusText;
+      if (response.status === 401) {
+        errorMessage = buildGitHubAuthError();
+      } else if (response.status === 403) {
+        errorMessage = buildGitHubAccessError();
+      } else if (response.status === 409) {
+        errorMessage = "referenceSourcesMVP.json \u0431\u044B\u043B \u0438\u0437\u043C\u0435\u043D\u0451\u043D \u043F\u0430\u0440\u0430\u043B\u043B\u0435\u043B\u044C\u043D\u043E. \u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u044E, \u0447\u0442\u043E\u0431\u044B Athena \u043F\u043E\u0434\u0442\u044F\u043D\u0443\u043B\u0430 \u0441\u0432\u0435\u0436\u0443\u044E \u0432\u0435\u0440\u0441\u0438\u044E.";
+      }
+      throw new Error(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0431\u043D\u043E\u0432\u0438\u0442\u044C referenceSourcesMVP.json: ${errorMessage}`);
+    }
+  }
+  function findReferenceLibrary(referenceList, target) {
+    var _a, _b, _c;
+    if (!Array.isArray(referenceList.libraries)) {
+      referenceList.libraries = [];
+    }
+    const libraryName = readString((_a = target.meta) == null ? void 0 : _a.library) || readString((_b = target.meta) == null ? void 0 : _b.fileName) || sanitizeRepoFileName(target.catalogName, "library");
+    const normalizedLibraryName = normalizeMatchKey(libraryName);
+    const libraryByFileKey = referenceList.libraries.find((library2) => {
+      const libraryFileKey = resolveReferenceSourceFileKey(library2.source);
+      return libraryFileKey && target.fileKey && normalizeMatchKey(libraryFileKey) === normalizeMatchKey(target.fileKey);
+    });
+    if (libraryByFileKey) {
+      return libraryByFileKey;
+    }
+    const libraryByName = referenceList.libraries.find(
+      (library2) => normalizeMatchKey(library2.name) === normalizedLibraryName
+    );
+    if (libraryByName) {
+      return libraryByName;
+    }
+    const source = {};
+    const figmaLink = readString((_c = target.meta) == null ? void 0 : _c.figmaLink);
+    if (figmaLink) {
+      source.figmaLibLink = figmaLink;
+    }
+    if (target.fileKey) {
+      source.fileKey = target.fileKey;
+    }
+    const library = {
+      name: libraryName,
+      source,
+      catalogs: []
+    };
+    referenceList.libraries.push(library);
+    return library;
+  }
+  function inferCatalogDirectory(library, kind) {
+    if (kind === "tokens") {
+      return "tokens";
+    }
+    if (kind === "styles") {
+      return "styles";
+    }
+    const catalogs = Array.isArray(library.catalogs) ? library.catalogs : [];
+    const directoryCounts = {};
+    catalogs.forEach((entry) => {
+      var _a;
+      const entryKind = (_a = entry.source) == null ? void 0 : _a.kind;
+      if (entryKind !== kind) {
+        return;
+      }
+      const directory = getRepoDirectory(entry.path || entry.fileName);
+      if (!directory) {
+        return;
+      }
+      directoryCounts[directory] = (directoryCounts[directory] || 0) + 1;
+    });
+    let bestDirectory = "";
+    let bestCount = 0;
+    Object.keys(directoryCounts).forEach((directory) => {
+      const count = directoryCounts[directory];
+      if (count > bestCount) {
+        bestDirectory = directory;
+        bestCount = count;
+      }
+    });
+    if (bestDirectory) {
+      return bestDirectory;
+    }
+    const libraryDirectory = sanitizeRepoFileName(library.name, "library");
+    return `components/${libraryDirectory}`;
+  }
+  function buildReferenceCatalogEntry(payload, target) {
+    var _a;
+    const source = {
+      kind: target.kind,
+      pageName: target.pageName
+    };
+    const figmaLink = readString((_a = payload.meta) == null ? void 0 : _a.figmaLink);
+    if (figmaLink) {
+      source.figmaPageLink = figmaLink;
+    }
+    if (target.fileKey) {
+      source.fileKey = target.fileKey;
+    }
+    return {
+      fileName: target.relativePath,
+      path: target.relativePath,
+      source
+    };
+  }
+  function registerReferenceCatalogEntry(referenceList, payload, target) {
+    const library = findReferenceLibrary(referenceList, {
+      catalogName: payload.catalogName,
+      fileKey: target.fileKey,
+      meta: payload.meta
+    });
+    if (!Array.isArray(library.catalogs)) {
+      library.catalogs = [];
+    }
+    const catalogBaseName = sanitizeRepoFileName(payload.catalogName, "catalog");
+    const directory = inferCatalogDirectory(library, target.kind);
+    const relativePath = joinRepoPath(directory, `${catalogBaseName}.json`);
+    const duplicateEntry = library.catalogs.find(
+      (entry2) => normalizeMatchKey(entry2.path) === normalizeMatchKey(relativePath) || matchesReferenceEntry(entry2, {
+        kind: target.kind,
+        catalogName: payload.catalogName,
+        fileKey: target.fileKey,
+        pageName: target.pageName
+      })
+    );
+    if (duplicateEntry) {
+      return duplicateEntry;
+    }
+    const entry = buildReferenceCatalogEntry(payload, {
+      kind: target.kind,
+      fileKey: target.fileKey,
+      pageName: target.pageName,
+      relativePath
+    });
+    library.catalogs.push(entry);
+    return entry;
   }
   async function resolvePublishFilePath(payload, githubToken) {
     var _a, _b;
@@ -2147,13 +2333,12 @@
         "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438\u0442\u044C \u0442\u0438\u043F \u043F\u0443\u0431\u043B\u0438\u043A\u0443\u0435\u043C\u043E\u0433\u043E \u043A\u0430\u0442\u0430\u043B\u043E\u0433\u0430. \u0414\u043B\u044F \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u043D\u0443\u0436\u0435\u043D kind."
       );
     }
-    const referenceList = await fetchReferenceCatalogList(githubToken);
-    const referenceEntries = normalizeReferenceCatalogEntries(referenceList);
-    if (!referenceEntries.length) {
-      throw new Error(
-        "referenceSourcesMVP.json \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u0438\u043B\u0438 \u043D\u0435 \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u0442 \u043A\u0430\u0442\u0430\u043B\u043E\u0433\u043E\u0432. \u041F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u044F \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0430."
-      );
+    if (kind === "component-index") {
+      throw new Error("component-index \u043F\u0443\u0431\u043B\u0438\u043A\u0443\u0435\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u0430\u043A \u0441\u0432\u044F\u0437\u0430\u043D\u043D\u044B\u0439 \u0430\u0440\u0442\u0435\u0444\u0430\u043A\u0442 \u043A\u0430\u0442\u0430\u043B\u043E\u0433\u0430 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u043E\u0432.");
     }
+    const referenceFile = await fetchReferenceCatalogFile(githubToken);
+    const referenceList = referenceFile.list || createEmptyReferenceCatalogList();
+    const referenceEntries = normalizeReferenceCatalogEntries(referenceList);
     const matchedEntry = referenceEntries.find(
       (entry) => matchesReferenceEntry(entry, {
         kind,
@@ -2162,13 +2347,32 @@
         pageName
       })
     );
-    if (!(matchedEntry == null ? void 0 : matchedEntry.path)) {
-      throw new Error(
-        `\u0412 referenceSourcesMVP.json \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u043F\u0443\u0442\u044C \u0434\u043B\u044F ${payload.catalogName}. \u041F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u044F \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0430.`
-      );
+    let referenceUpdated = false;
+    let resolvedEntry = matchedEntry;
+    if (!(resolvedEntry == null ? void 0 : resolvedEntry.path)) {
+      resolvedEntry = registerReferenceCatalogEntry(referenceList, payload, {
+        kind,
+        fileKey,
+        pageName: pageName || stripJsonExtension(payload.catalogName)
+      });
+      referenceUpdated = true;
+      console.log("[CODE] reference catalog registered:", {
+        catalogName: payload.catalogName,
+        path: resolvedEntry.path,
+        kind,
+        fileKey,
+        pageName
+      });
     }
     const publishRoot = resolvePublishRootFromBaseUrl(referenceList == null ? void 0 : referenceList.baseUrl);
-    return joinRepoPath(publishRoot, matchedEntry.path);
+    const referencePath = resolvedEntry.path;
+    return {
+      filePath: joinRepoPath(publishRoot, referencePath),
+      referenceUpdated,
+      referencePath,
+      referenceList: referenceUpdated ? referenceList : void 0,
+      referenceSha: referenceUpdated ? referenceFile.sha : void 0
+    };
   }
   function buildComponentIndexPath(catalogPath) {
     const normalizedPath = normalizeRepoPath(catalogPath);
@@ -2247,7 +2451,8 @@
       const repo = `${GITHUB_OWNER}/${GITHUB_REPO}`;
       const owner = GITHUB_OWNER;
       const repoName = GITHUB_REPO;
-      const filePath = await resolvePublishFilePath(payload, githubToken);
+      const publishResolution = await resolvePublishFilePath(payload, githubToken);
+      const filePath = publishResolution.filePath;
       const publishTargets = [
         {
           json: payload.json,
@@ -2279,7 +2484,9 @@
         kind: (_e = payload.meta) == null ? void 0 : _e.kind,
         fileKey: resolveCurrentFileKey(payload.meta),
         pageName: (_f = payload.meta) == null ? void 0 : _f.pageName,
-        relatedArtifacts: publishTargets.length - 1
+        relatedArtifacts: publishTargets.length - 1,
+        referenceUpdated: publishResolution.referenceUpdated,
+        referencePath: publishResolution.referencePath
       });
       const results = [];
       for (const target of publishTargets) {
@@ -2325,11 +2532,24 @@
         });
         results.push({ catalogName: target.catalogName, url: result.html_url });
       }
+      if (publishResolution.referenceUpdated && publishResolution.referenceList) {
+        await putReferenceCatalogList(
+          publishResolution.referenceList,
+          publishResolution.referenceSha,
+          githubToken,
+          catalogName
+        );
+        console.log("[CODE] referenceSourcesMVP.json updated:", {
+          catalogName,
+          referencePath: publishResolution.referencePath
+        });
+      }
       const primaryResult = results[0];
       logDebug("publish-catalog-success", {
         catalogName,
         url: primaryResult == null ? void 0 : primaryResult.url,
-        files: results.length
+        files: results.length,
+        referenceUpdated: publishResolution.referenceUpdated
       });
       figma.notify(`\u2713 \u041E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432: ${results.length} \u0432 ${repo}`, {
         timeout: 5e3
@@ -2340,7 +2560,9 @@
           success: true,
           catalogName,
           url: primaryResult == null ? void 0 : primaryResult.url,
-          files: results
+          files: results,
+          referenceUpdated: publishResolution.referenceUpdated,
+          referencePath: publishResolution.referencePath
         }
       });
     } catch (error) {
