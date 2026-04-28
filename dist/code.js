@@ -2020,6 +2020,9 @@
   function normalizeMatchKey(value) {
     return (value != null ? value : "").trim().toLowerCase();
   }
+  function normalizeLooseMatchKey(value) {
+    return (value != null ? value : "").replace(/\.json$/i, "").trim().toLowerCase().replace(/[^a-z0-9а-яё]+/gi, "-").replace(/^-+|-+$/g, "");
+  }
   function normalizeRepoPath(value) {
     return value.replace(/^\/+/, "").trim();
   }
@@ -2098,9 +2101,9 @@
     }
     const entryBaseName = getPathBaseName(entry.path || entry.fileName);
     const entryFileName = getPathBaseName(entry.fileName);
-    const nameMatches = normalizeMatchKey(entryBaseName) === normalizeMatchKey(target.catalogName) || normalizeMatchKey(entryFileName) === normalizeMatchKey(target.catalogName);
+    const nameMatches = normalizeLooseMatchKey(entryBaseName) === normalizeLooseMatchKey(target.catalogName) || normalizeLooseMatchKey(entryFileName) === normalizeLooseMatchKey(target.catalogName);
     if (target.kind === "components") {
-      const pageMatches = normalizeMatchKey(source.pageName) === normalizeMatchKey(target.pageName);
+      const pageMatches = normalizeLooseMatchKey(source.pageName) === normalizeLooseMatchKey(target.pageName);
       if (pageMatches || nameMatches) {
         return true;
       }
@@ -2206,7 +2209,7 @@
       referenceList.libraries = [];
     }
     const libraryName = readString((_a = target.meta) == null ? void 0 : _a.library) || readString((_b = target.meta) == null ? void 0 : _b.fileName) || sanitizeRepoFileName(target.catalogName, "library");
-    const normalizedLibraryName = normalizeMatchKey(libraryName);
+    const normalizedLibraryName = normalizeLooseMatchKey(libraryName);
     const libraryByFileKey = referenceList.libraries.find((library2) => {
       const libraryFileKey = resolveReferenceSourceFileKey(library2.source);
       return libraryFileKey && target.fileKey && normalizeMatchKey(libraryFileKey) === normalizeMatchKey(target.fileKey);
@@ -2215,7 +2218,7 @@
       return libraryByFileKey;
     }
     const libraryByName = referenceList.libraries.find(
-      (library2) => normalizeMatchKey(library2.name) === normalizedLibraryName
+      (library2) => normalizeLooseMatchKey(library2.name) === normalizedLibraryName
     );
     if (libraryByName) {
       return libraryByName;

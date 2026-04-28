@@ -347,6 +347,15 @@ function normalizeMatchKey(value: string | undefined): string {
   return (value ?? '').trim().toLowerCase();
 }
 
+function normalizeLooseMatchKey(value: string | undefined): string {
+  return (value ?? '')
+    .replace(/\.json$/i, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function normalizeRepoPath(value: string): string {
   return value.replace(/^\/+/, '').trim();
 }
@@ -466,12 +475,15 @@ function matchesReferenceEntry(
   const entryBaseName = getPathBaseName(entry.path || entry.fileName);
   const entryFileName = getPathBaseName(entry.fileName);
   const nameMatches =
-    normalizeMatchKey(entryBaseName) === normalizeMatchKey(target.catalogName) ||
-    normalizeMatchKey(entryFileName) === normalizeMatchKey(target.catalogName);
+    normalizeLooseMatchKey(entryBaseName) ===
+      normalizeLooseMatchKey(target.catalogName) ||
+    normalizeLooseMatchKey(entryFileName) ===
+      normalizeLooseMatchKey(target.catalogName);
 
   if (target.kind === 'components') {
     const pageMatches =
-      normalizeMatchKey(source.pageName) === normalizeMatchKey(target.pageName);
+      normalizeLooseMatchKey(source.pageName) ===
+      normalizeLooseMatchKey(target.pageName);
 
     if (pageMatches || nameMatches) {
       return true;
@@ -617,7 +629,7 @@ function findReferenceLibrary(
     readString(target.meta?.library) ||
     readString(target.meta?.fileName) ||
     sanitizeRepoFileName(target.catalogName, 'library');
-  const normalizedLibraryName = normalizeMatchKey(libraryName);
+  const normalizedLibraryName = normalizeLooseMatchKey(libraryName);
 
   const libraryByFileKey = referenceList.libraries.find((library) => {
     const libraryFileKey = resolveReferenceSourceFileKey(library.source);
@@ -632,7 +644,7 @@ function findReferenceLibrary(
   }
 
   const libraryByName = referenceList.libraries.find(
-    (library) => normalizeMatchKey(library.name) === normalizedLibraryName,
+    (library) => normalizeLooseMatchKey(library.name) === normalizedLibraryName,
   );
   if (libraryByName) {
     return libraryByName;
