@@ -10,6 +10,7 @@ Figma-плагин для сбора и публикации JSON-артефак
 - Экспортировать локальные стили в JSON.
 - Работать с reference-файлом нового формата `libraries[].catalogs[]`.
 - Публиковать компоненты, токены и стили напрямую в GitHub-репозиторий `ackedze/design-system_ab`.
+- Автоматически регистрировать новые page-каталоги в `JSONS/referenceSourcesMVP.json`, если для них ещё нет reference entry.
 - Отдавать runner-friendly publish context через DOM marker для automation-runner.
 
 ## Ключевые файлы
@@ -62,8 +63,12 @@ code.ts -> UI
 5. UI синхронизирует publish context в DOM через marker `#runner-publish-meta` и видимое имя файла `#catalog-file-name`.
 6. Runner читает эти значения из iframe Athena и использует их как source of truth для автоматической публикации.
 7. UI показывает диалог ввода GitHub token только если токен ещё не сохранён в памяти текущей сессии.
-8. `code.ts` публикует JSON через GitHub Contents API в `catalogs/{fileName}.json`.
-9. Publish transport использует UTF-8-safe base64-кодирование, поэтому кириллица и другие non-ASCII строки не должны повреждаться при записи в GitHub.
+8. `code.ts` ищет matching entry в `JSONS/referenceSourcesMVP.json`.
+9. Если matching entry нет, Athena добавляет новый catalog entry в соответствующую библиотеку, подбирая путь по уже существующей структуре этой библиотеки; для новой библиотеки создаётся новая запись.
+10. `code.ts` публикует JSON через GitHub Contents API по resolved reference path.
+11. Для `components` вместе с каталогом публикуется связанный `component-index` в `JSONS/indexes/`.
+12. `referenceSourcesMVP.json` обновляется после успешной публикации JSON и index-файлов, чтобы Apollo не получил ссылку на ещё несуществующий каталог.
+13. Publish transport использует UTF-8-safe base64-кодирование, поэтому кириллица и другие non-ASCII строки не должны повреждаться при записи в GitHub.
 
 ## Использование
 
@@ -101,6 +106,10 @@ npm run watch
 ```
 
 Сборка пишет артефакты в `dist/`, на которые ссылается `manifest.json`.
+
+## Правило публикации
+
+При публикации изменений Athena обновляйте этот README вместе с кодом, если меняется сбор, публикация, reference manifest, runner contract или поведение сбора компонентов/токенов/стилей. Если изменение влияет на общий workspace-процесс, дополнительно обновляйте root `README.md` и `WORKSPACE.md`.
 
 ## Заметки
 
