@@ -2012,6 +2012,86 @@
           };
         }
 
+        function buildComponentIndexPayload(exportData, descriptor) {
+          var components =
+            exportData && Array.isArray(exportData.components)
+              ? exportData.components
+              : [];
+          var meta = (exportData && exportData.meta) || {};
+          var componentEntries = [];
+          var keyEntries = [];
+          var seenKeys = {};
+
+          components.forEach(function (component) {
+            if (!component || !component.key) return;
+
+            var variants = Array.isArray(component.variants)
+              ? component.variants
+                  .filter(function (variant) {
+                    return variant && variant.key;
+                  })
+                  .map(function (variant) {
+                    return {
+                      key: variant.key,
+                      id: variant.id || '',
+                      name: variant.name || '',
+                    };
+                  })
+              : [];
+
+            componentEntries.push({
+              key: component.key,
+              name: component.name || '',
+              role: component.role || '',
+              status: component.status || '',
+              platform: component.platform || '',
+              category: component.category || '',
+              defaultVariant: component.defaultVariant || null,
+              variants: variants,
+            });
+
+            addIndexKeyEntry(keyEntries, seenKeys, {
+              key: component.key,
+              type: 'component',
+              componentKey: component.key,
+              componentName: component.name || '',
+            });
+
+            variants.forEach(function (variant) {
+              addIndexKeyEntry(keyEntries, seenKeys, {
+                key: variant.key,
+                type: 'variant',
+                componentKey: component.key,
+                componentName: component.name || '',
+                variantName: variant.name || '',
+              });
+            });
+          });
+
+          return {
+            kind: 'component-index',
+            version: 1,
+            generatedAt: new Date().toISOString(),
+            catalogName: descriptor.catalogBaseName,
+            fileName: descriptor.fileName,
+            library: meta.library || descriptor.meta.library || '',
+            pageName: descriptor.meta.pageName || '',
+            source: {
+              kind: 'components',
+              fileKey: descriptor.meta.fileKey || '',
+              figmaLink: descriptor.meta.figmaLink || '',
+            },
+            components: componentEntries,
+            entries: keyEntries,
+          };
+        }
+
+        function addIndexKeyEntry(entries, seenKeys, entry) {
+          if (!entry || !entry.key || seenKeys[entry.key]) return;
+          seenKeys[entry.key] = true;
+          entries.push(entry);
+        }
+
         function syncRunnerPublishMetaForActiveTab() {
           var descriptor = getPublishDescriptorForTab(activeTab);
           if (!descriptor || !descriptor.fileName) {
@@ -2065,6 +2145,21 @@
             json: content,
             meta: descriptor.meta,
             fileName: descriptor.fileName,
+            relatedArtifacts: [
+              {
+                json: JSON.stringify(
+                  buildComponentIndexPayload(lastExportData, descriptor),
+                  null,
+                  2,
+                ),
+                catalogName:
+                  descriptor.catalogBaseName.replace(/\.json$/, '') +
+                  '.index.json',
+                meta: Object.assign({}, descriptor.meta, {
+                  kind: 'component-index',
+                }),
+              },
+            ],
           };
         }
 
@@ -2192,6 +2287,7 @@
               json: publishPayload.json,
               catalogName: catalogName,
               meta: publishPayload.meta,
+              relatedArtifacts: publishPayload.relatedArtifacts || [],
             };
             window.__publishState = {
               status: 'running',
@@ -2215,6 +2311,7 @@
             json: publishPayload.json,
             catalogName: catalogName,
             meta: publishPayload.meta,
+            relatedArtifacts: publishPayload.relatedArtifacts || [],
           });
         }
       })();

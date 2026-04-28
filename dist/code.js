@@ -2167,8 +2167,48 @@
         `\u0412 referenceSourcesMVP.json \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u043F\u0443\u0442\u044C \u0434\u043B\u044F ${payload.catalogName}. \u041F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u044F \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0430.`
       );
     }
-    const publishRoot = resolvePublishRootFromBaseUrl(referenceList.baseUrl);
+    const publishRoot = resolvePublishRootFromBaseUrl(referenceList == null ? void 0 : referenceList.baseUrl);
     return joinRepoPath(publishRoot, matchedEntry.path);
+  }
+  function buildComponentIndexPath(catalogPath) {
+    const normalizedPath = normalizeRepoPath(catalogPath);
+    const manifestRoot = getManifestPublishRoot();
+    const rootPrefix = normalizedPath.startsWith(`${manifestRoot}/`) ? `${manifestRoot}/` : "";
+    const relativeCatalogPath = rootPrefix ? normalizedPath.slice(rootPrefix.length) : normalizedPath;
+    const indexRelativePath = relativeCatalogPath.replace(/\.json$/i, ".index.json");
+    return joinRepoPath(rootPrefix ? `${manifestRoot}/indexes` : "indexes", indexRelativePath);
+  }
+  function enrichComponentIndexJson(rawJson, context) {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("Invalid component index payload");
+    }
+    const payload = parsed;
+    payload.catalogPath = context.catalogPath;
+    payload.indexPath = context.indexPath;
+    if (Array.isArray(payload.components)) {
+      payload.components = payload.components.map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return entry;
+        }
+        return Object.assign({}, entry, {
+          catalogPath: context.catalogPath,
+          indexPath: context.indexPath
+        });
+      });
+    }
+    if (Array.isArray(payload.entries)) {
+      payload.entries = payload.entries.map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return entry;
+        }
+        return Object.assign({}, entry, {
+          catalogPath: context.catalogPath,
+          indexPath: context.indexPath
+        });
+      });
+    }
+    return JSON.stringify(payload, null, 2);
   }
   async function getExistingFileSha(apiUrl, githubToken) {
     const response = await fetch(apiUrl, {
@@ -2195,7 +2235,7 @@
     return fileData.sha;
   }
   async function publishWithToken(payload, githubToken) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f;
     try {
       if (!payload || !payload.json || !payload.catalogName) {
         throw new Error("Invalid publish payload");
@@ -2208,52 +2248,90 @@
       const owner = GITHUB_OWNER;
       const repoName = GITHUB_REPO;
       const filePath = await resolvePublishFilePath(payload, githubToken);
-      const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}`;
+      const publishTargets = [
+        {
+          json: payload.json,
+          catalogName,
+          filePath,
+          kind: (_a = payload.meta) == null ? void 0 : _a.kind
+        }
+      ];
+      if (((_b = payload.meta) == null ? void 0 : _b.kind) === "components" && ((_c = payload.relatedArtifacts) == null ? void 0 : _c.length)) {
+        for (const artifact of payload.relatedArtifacts) {
+          if (((_d = artifact.meta) == null ? void 0 : _d.kind) !== "component-index") {
+            continue;
+          }
+          const indexFilePath = buildComponentIndexPath(filePath);
+          publishTargets.push({
+            json: enrichComponentIndexJson(artifact.json, {
+              catalogPath: filePath,
+              indexPath: indexFilePath
+            }),
+            catalogName: artifact.catalogName.replace(/\.json$/, ""),
+            filePath: indexFilePath,
+            kind: artifact.meta.kind
+          });
+        }
+      }
       console.log("[CODE] publishing to GitHub:", {
-        apiUrl,
         catalogName,
         filePath,
-        kind: (_a = payload.meta) == null ? void 0 : _a.kind,
+        kind: (_e = payload.meta) == null ? void 0 : _e.kind,
         fileKey: resolveCurrentFileKey(payload.meta),
-        pageName: (_b = payload.meta) == null ? void 0 : _b.pageName
+        pageName: (_f = payload.meta) == null ? void 0 : _f.pageName,
+        relatedArtifacts: publishTargets.length - 1
       });
-      const encodedContent = stringToBase64(payload.json);
-      const sha = await getExistingFileSha(apiUrl, githubToken);
-      if (sha) {
-        console.log("[CODE] existing file found, sha:", sha);
-      } else {
-        console.log("[CODE] file does not exist yet, creating new");
-      }
-      const requestBody = {
-        message: `Publish design system catalog: ${catalogName}`,
-        content: encodedContent
-      };
-      if (sha) {
-        requestBody.sha = sha;
-      }
-      const putResponse = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `token ${githubToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(requestBody)
-      });
-      if (!putResponse.ok) {
-        const errorData = await putResponse.json();
-        let errorMessage = errorData.message || putResponse.statusText;
-        if (putResponse.status === 401) {
-          errorMessage = buildGitHubAuthError();
-        } else if (putResponse.status === 403) {
-          errorMessage = buildGitHubAccessError();
+      const results = [];
+      for (const target of publishTargets) {
+        const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${target.filePath}`;
+        const encodedContent = stringToBase64(target.json);
+        const sha = await getExistingFileSha(apiUrl, githubToken);
+        if (sha) {
+          console.log("[CODE] existing file found, sha:", sha);
+        } else {
+          console.log("[CODE] file does not exist yet, creating new");
         }
-        throw new Error(`GitHub API error: ${errorMessage}`);
+        const requestBody = {
+          message: `Publish design system catalog: ${target.catalogName}`,
+          content: encodedContent
+        };
+        if (sha) {
+          requestBody.sha = sha;
+        }
+        const putResponse = await fetch(apiUrl, {
+          method: "PUT",
+          headers: {
+            Authorization: `token ${githubToken}`,
+            Accept: "application/vnd.github.v3+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        });
+        if (!putResponse.ok) {
+          const errorData = await putResponse.json();
+          let errorMessage = errorData.message || putResponse.statusText;
+          if (putResponse.status === 401) {
+            errorMessage = buildGitHubAuthError();
+          } else if (putResponse.status === 403) {
+            errorMessage = buildGitHubAccessError();
+          }
+          throw new Error(`GitHub API error: ${errorMessage}`);
+        }
+        const result = await putResponse.json();
+        console.log("[CODE] catalog published successfully:", {
+          catalogName: target.catalogName,
+          kind: target.kind,
+          url: result.html_url
+        });
+        results.push({ catalogName: target.catalogName, url: result.html_url });
       }
-      const result = await putResponse.json();
-      console.log("[CODE] catalog published successfully:", result);
-      logDebug("publish-catalog-success", { catalogName, url: result.html_url });
-      figma.notify(`\u2713 \u041A\u0430\u0442\u0430\u043B\u043E\u0433 "${catalogName}" \u043E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u043D \u0432 ${repo}`, {
+      const primaryResult = results[0];
+      logDebug("publish-catalog-success", {
+        catalogName,
+        url: primaryResult == null ? void 0 : primaryResult.url,
+        files: results.length
+      });
+      figma.notify(`\u2713 \u041E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432: ${results.length} \u0432 ${repo}`, {
         timeout: 5e3
       });
       figma.ui.postMessage({
@@ -2261,7 +2339,8 @@
         payload: {
           success: true,
           catalogName,
-          url: result.html_url
+          url: primaryResult == null ? void 0 : primaryResult.url,
+          files: results
         }
       });
     } catch (error) {
