@@ -643,9 +643,9 @@ function findReferenceLibrary(
     return libraryByFileKey;
   }
 
-  const libraryByName = referenceList.libraries.find(
-    (library) => normalizeLooseMatchKey(library.name) === normalizedLibraryName,
-  );
+  const libraryByName = referenceList.libraries
+    .filter((library) => normalizeLooseMatchKey(library.name) === normalizedLibraryName)
+    .sort((a, b) => scoreReferenceLibrary(b) - scoreReferenceLibrary(a))[0];
   if (libraryByName) {
     return libraryByName;
   }
@@ -669,7 +669,14 @@ function findReferenceLibrary(
   return library;
 }
 
+function scoreReferenceLibrary(library: ReferenceLibrary): number {
+  const catalogCount = Array.isArray(library.catalogs) ? library.catalogs.length : 0;
+  const hasSource = library.source && Object.keys(library.source).length > 0;
+  return catalogCount + (hasSource ? 1000 : 0);
+}
+
 function inferCatalogDirectory(
+  referenceList: ReferenceCatalogList,
   library: ReferenceLibrary,
   kind: PublishArtifactKind,
 ): string {
@@ -680,7 +687,16 @@ function inferCatalogDirectory(
     return 'styles';
   }
 
-  const catalogs = Array.isArray(library.catalogs) ? library.catalogs : [];
+  const normalizedLibraryName = normalizeLooseMatchKey(library.name);
+  const libraries = Array.isArray(referenceList.libraries)
+    ? referenceList.libraries.filter(
+        (candidate) =>
+          normalizeLooseMatchKey(candidate.name) === normalizedLibraryName,
+      )
+    : [library];
+  const catalogs = libraries.flatMap((candidate) =>
+    Array.isArray(candidate.catalogs) ? candidate.catalogs : [],
+  );
   const directoryCounts: Record<string, number> = {};
 
   catalogs.forEach((entry) => {
@@ -711,8 +727,16 @@ function inferCatalogDirectory(
     return bestDirectory;
   }
 
-  const libraryDirectory = sanitizeRepoFileName(library.name, 'library');
-  return `components/${libraryDirectory}`;
+  return inferComponentLibraryDirectory(library.name);
+}
+
+function inferComponentLibraryDirectory(libraryName: string | undefined): string {
+  const normalizedName = normalizeLooseMatchKey(libraryName);
+  if (normalizedName.startsWith('web-')) {
+    return `web/components/${normalizedName}`;
+  }
+
+  return `components/${sanitizeRepoFileName(libraryName || '', 'library')}`;
 }
 
 function buildReferenceCatalogEntry(
@@ -764,7 +788,7 @@ function registerReferenceCatalogEntry(
   }
 
   const catalogBaseName = sanitizeRepoFileName(payload.catalogName, 'catalog');
-  const directory = inferCatalogDirectory(library, target.kind);
+  const directory = inferCatalogDirectory(referenceList, library, target.kind);
   const relativePath = joinRepoPath(directory, `${catalogBaseName}.json`);
 
   const duplicateEntry = library.catalogs.find(
