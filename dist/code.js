@@ -1810,6 +1810,8 @@
   var GITHUB_OWNER = "ackedze";
   var GITHUB_REPO = "design-system_ab";
   var REFERENCE_SOURCES_PATH = "JSONS/referenceSourcesMVP.json";
+  var WEB_CORP_COMPONENTS_PATH = "JSONS/web/components/web-corp";
+  var APOLLO_RULES_REGISTRY_FILE = "apollo-rules-registry.json";
   figma.ui.onmessage = (msg) => {
     console.log("[CODE] received message from UI:", msg);
     logDebug("ui-message", msg);
@@ -2400,6 +2402,11 @@
     const indexRelativePath = relativeCatalogPath.replace(/\.json$/i, ".index.json");
     return joinRepoPath(rootPrefix ? `${manifestRoot}/indexes` : "indexes", indexRelativePath);
   }
+  function buildComponentPackageArtifactPath(catalogPath, packageName, fileName) {
+    const normalizedCatalogPath = normalizeRepoPath(catalogPath);
+    const catalogDirectory = getRepoDirectory(normalizedCatalogPath);
+    return joinRepoPath(catalogDirectory, `${packageName}/${fileName}`);
+  }
   function enrichComponentIndexJson(rawJson, context) {
     const parsed = JSON.parse(rawJson);
     if (!parsed || typeof parsed !== "object") {
@@ -2432,6 +2439,102 @@
     }
     return JSON.stringify(payload, null, 2);
   }
+  async function mergeComponentPackageArtifactJson(apiUrl, githubToken, nextJson) {
+    const existingJson = await fetchExistingGitHubJson(apiUrl, githubToken);
+    if (!existingJson) {
+      return nextJson;
+    }
+    const existing = parseJsonObject(existingJson);
+    const next = parseJsonObject(nextJson);
+    if (!existing || !next) {
+      return nextJson;
+    }
+    const documentType = readString(next.documentType);
+    if (documentType === "component-agent-context") {
+      return JSON.stringify(mergeAgentContextArtifact(existing, next), null, 2);
+    }
+    if (documentType === "component-audit-mapping") {
+      return JSON.stringify(mergeAuditMappingArtifact(existing, next), null, 2);
+    }
+    return nextJson;
+  }
+  function mergeAgentContextArtifact(existing, next) {
+    const generated = readRecord(next.generated) || {};
+    const manual = readRecord(existing.manual) || extractAgentContextManual(existing);
+    return stripUndefinedProperties({
+      ...next,
+      status: readString(existing.status) || readString(next.status) || "draft",
+      manual,
+      summary: readString(manual.summary) || readString(next.summary),
+      criticalBaselines: manual.criticalBaselines || next.criticalBaselines,
+      agentInstructions: manual.agentInstructions || next.agentInstructions,
+      codeExports: manual.codeExports || next.codeExports,
+      auditInterpretation: manual.auditInterpretation || next.auditInterpretation,
+      source: generated.source || next.source,
+      sourceFiles: generated.sourceFiles || next.sourceFiles,
+      components: generated.components || next.components,
+      includedComponents: generated.components || next.includedComponents
+    });
+  }
+  function mergeAuditMappingArtifact(existing, next) {
+    const generated = readRecord(next.generated) || {};
+    const manual = readRecord(existing.manual) || extractAuditMappingManual(existing);
+    return stripUndefinedProperties({
+      ...next,
+      status: readString(existing.status) || readString(next.status) || "draft",
+      manual,
+      classification: generated.classification || next.classification,
+      groupingOrder: generated.groupingOrder || next.groupingOrder,
+      evidencePolicy: generated.evidencePolicy || next.evidencePolicy,
+      categories: manual.categories || generated.categories || next.categories,
+      hostIntegrationNote: manual.hostIntegrationNote || next.hostIntegrationNote,
+      codeExportAliases: manual.codeExportAliases || next.codeExportAliases
+    });
+  }
+  function extractAgentContextManual(existing) {
+    return stripUndefinedProperties({
+      summary: existing.summary,
+      criticalBaselines: existing.criticalBaselines,
+      agentInstructions: existing.agentInstructions,
+      codeExports: existing.codeExports,
+      auditInterpretation: existing.auditInterpretation,
+      notes: existing.notes
+    });
+  }
+  function extractAuditMappingManual(existing) {
+    return stripUndefinedProperties({
+      categories: existing.categories,
+      hostIntegrationNote: existing.hostIntegrationNote,
+      codeExportAliases: existing.codeExportAliases,
+      notes: existing.notes
+    });
+  }
+  function stripUndefinedProperties(input) {
+    const output = {};
+    Object.keys(input).forEach((key) => {
+      if (input[key] !== void 0) {
+        output[key] = input[key];
+      }
+    });
+    return output;
+  }
+  function parseJsonObject(value) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      console.warn("[CODE] failed to parse GitHub json for merge", error);
+    }
+    return void 0;
+  }
+  function readRecord(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value;
+    }
+    return void 0;
+  }
   async function getExistingFileSha(apiUrl, githubToken) {
     const response = await fetch(apiUrl, {
       headers: {
@@ -2456,8 +2559,288 @@
     const fileData = await response.json();
     return fileData.sha;
   }
+  async function fetchExistingGitHubJson(apiUrl, githubToken) {
+    const response = await fetch(apiUrl, {
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: "application/vnd.github.v3+json"
+      }
+    });
+    if (response.status === 404) {
+      return void 0;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0438\u0439 package artifact \u0438\u0437 GitHub: ${response.status} ${response.statusText}`
+      );
+    }
+    const fileData = await response.json();
+    if (!fileData.content || fileData.encoding !== "base64") {
+      return void 0;
+    }
+    return base64ToString(fileData.content);
+  }
+  function isWebCorpComponentCatalogPath(filePath) {
+    const normalizedPath = normalizeRepoPath(filePath).replace(/\\/g, "/");
+    return normalizedPath === WEB_CORP_COMPONENTS_PATH || normalizedPath.startsWith(`${WEB_CORP_COMPONENTS_PATH}/`);
+  }
+  function getComponentPackageNameFromCatalog(catalogJson, catalogName) {
+    const catalog = parseJsonObject(catalogJson);
+    const source = catalog ? readRecord(catalog.source) : void 0;
+    const sourceFiles = source && Array.isArray(source.files) ? source.files : [];
+    const sourceName = sourceFiles.find(
+      (value) => typeof value === "string" && value.trim()
+    );
+    const fallbackName = stripJsonExtension(catalogName).replace(
+      /^Web _ Corp Components -- /,
+      ""
+    );
+    const packageName = String(sourceName || fallbackName).replace(/::/g, " ").replace(/\s+/g, " ").trim();
+    return packageName || void 0;
+  }
+  function slugifyComponentName(value) {
+    return String(value || "").replace(/\[[DMT]\]/gi, " ").replace(/^[DMT]\]\s*/i, " ").replace(/\[[^\]]+\]/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[^\wА-Яа-яЁё]+/g, "-").replace(/_+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+  }
+  function getDefaultComponentKey(packageName) {
+    return `web-corp.${slugifyComponentName(packageName)}`;
+  }
+  function removeLeadingComponentMarkers(value) {
+    return String(value || "").replace(/^[^\wА-Яа-яЁё\[]+\s*/u, "").trim();
+  }
+  function addAlias(aliases, value) {
+    if (typeof value !== "string") return;
+    const normalized = value.trim();
+    if (normalized) {
+      aliases.add(normalized);
+    }
+  }
+  function getCatalogAliases(catalogJson, packageName) {
+    const aliases = /* @__PURE__ */ new Set();
+    addAlias(aliases, packageName);
+    const catalog = parseJsonObject(catalogJson);
+    const components = catalog && Array.isArray(catalog.components) ? catalog.components : [];
+    components.forEach((component) => {
+      const record = readRecord(component);
+      const name = record ? readString(record.name) : void 0;
+      if (!name) return;
+      addAlias(aliases, name);
+      addAlias(aliases, removeLeadingComponentMarkers(name));
+    });
+    return Array.from(aliases).sort((left, right) => left.localeCompare(right));
+  }
+  function buildDefaultComponentRules(catalogJson, packageName) {
+    const componentKey = getDefaultComponentKey(packageName);
+    const aliases = getCatalogAliases(catalogJson, packageName);
+    return {
+      schemaVersion: 1,
+      documentType: "component-rules",
+      componentKey,
+      status: "generated-draft",
+      rules: [
+        {
+          ruleId: `component:${componentKey}.component-properties-are-first-class`,
+          severity: "info",
+          source: "component-contract",
+          appliesTo: "variant.*",
+          checkType: "deterministic",
+          matchKind: "exact_component_rule",
+          target: {
+            component: packageName,
+            layers: aliases
+          },
+          ruleText: "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F variant/property \u0432 \u044D\u0442\u043E\u043C \u0441\u0435\u043C\u0435\u0439\u0441\u0442\u0432\u0435 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u043E\u0432 \u044F\u0432\u043B\u044F\u044E\u0442\u0441\u044F component-property customizations. \u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0439 \u0438\u0445 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E \u043E\u0442 \u043F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u043D\u044B\u0445 \u0432\u0438\u0437\u0443\u0430\u043B\u044C\u043D\u044B\u0445 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 layer."
+        },
+        {
+          ruleId: `component:${componentKey}.layer-properties-use-effective-baseline`,
+          severity: "warning",
+          source: "composition-contract",
+          appliesTo: "layout.*|styles.text|fill|stroke|radius|opacity",
+          checkType: "deterministic",
+          matchKind: "exact_component_rule",
+          target: {
+            component: packageName,
+            layers: aliases
+          },
+          ruleText: "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F layer/style \u0432\u043D\u0443\u0442\u0440\u0438 \u044D\u0442\u043E\u0433\u043E \u0441\u0435\u043C\u0435\u0439\u0441\u0442\u0432\u0430 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u043E\u0432 \u043D\u0443\u0436\u043D\u043E \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0442\u044C \u0441 effective baseline \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E component variant \u0438 nested owner context."
+        },
+        {
+          ruleId: `component:${componentKey}.lifecycle-context-is-informational`,
+          severity: "info",
+          source: "component-contract",
+          appliesTo: "component.status",
+          checkType: "manual",
+          ruleText: "Lifecycle status \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 \u044F\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442\u043E\u043C \u0434\u043B\u044F \u0430\u0433\u0435\u043D\u0442\u0430. \u041D\u0435 \u0441\u0447\u0438\u0442\u0430\u0439 \u0435\u0433\u043E \u0434\u0438\u0437\u0430\u0439\u043D-\u043D\u0430\u0440\u0443\u0448\u0435\u043D\u0438\u0435\u043C, \u0435\u0441\u043B\u0438 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0439 pattern \u0438\u043B\u0438 exact design rule."
+        }
+      ]
+    };
+  }
+  async function putGitHubJsonFile(apiUrl, githubToken, json, message, sha) {
+    const requestBody = {
+      message,
+      content: stringToBase64(`${json.trim()}
+`)
+    };
+    if (sha) {
+      requestBody.sha = sha;
+    }
+    const response = await fetch(apiUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      const errorMessage = errorData.message || response.statusText;
+      throw new Error(`GitHub API error (${response.status}): ${errorMessage}`);
+    }
+    const result = await response.json();
+    return {
+      catalogName: message,
+      url: result.html_url || ""
+    };
+  }
+  function buildRulesRegistryEntry(rules, packageName, rulesFilePath, catalogJson, existingEntry) {
+    const aliases = /* @__PURE__ */ new Set();
+    const existingAliases = existingEntry && Array.isArray(existingEntry.aliases) ? existingEntry.aliases : [];
+    existingAliases.forEach((alias) => addAlias(aliases, alias));
+    getCatalogAliases(catalogJson, packageName).forEach(
+      (alias) => addAlias(aliases, alias)
+    );
+    return {
+      componentKey: readString(rules.componentKey) || getDefaultComponentKey(packageName),
+      packageName,
+      aliases: Array.from(aliases).sort(
+        (left, right) => left.localeCompare(right)
+      ),
+      rulesFile: rulesFilePath,
+      rules: Array.isArray(rules.rules) ? rules.rules : []
+    };
+  }
+  function buildUpdatedRulesRegistry(existingRegistry, entry) {
+    const existingEntries = existingRegistry && Array.isArray(existingRegistry.entries) ? existingRegistry.entries : [];
+    const packageName = readString(entry.packageName) || "";
+    const componentKey = readString(entry.componentKey) || "";
+    const entries = existingEntries.map((value) => readRecord(value)).filter((value) => Boolean(value)).filter((value) => {
+      return readString(value.packageName) !== packageName && readString(value.componentKey) !== componentKey;
+    });
+    entries.push(entry);
+    entries.sort((left, right) => {
+      const leftName = readString(left.packageName) || "";
+      const rightName = readString(right.packageName) || "";
+      return leftName.localeCompare(rightName);
+    });
+    return {
+      schemaVersion: 1,
+      documentType: "apollo-component-rules-registry",
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      entries
+    };
+  }
+  async function syncApolloRulesRegistry(filePath, catalogName, catalogJson, githubToken) {
+    if (!isWebCorpComponentCatalogPath(filePath)) {
+      return void 0;
+    }
+    const packageName = getComponentPackageNameFromCatalog(catalogJson, catalogName);
+    if (!packageName) {
+      throw new Error("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438\u0442\u044C \u0438\u043C\u044F \u043F\u0430\u043A\u0435\u0442\u0430 \u0434\u043B\u044F \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F rules registry");
+    }
+    const packageRulesPath = buildComponentPackageArtifactPath(
+      filePath,
+      packageName,
+      "rules.json"
+    );
+    const rulesApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${packageRulesPath}`;
+    let rulesJson = await fetchExistingGitHubJson(rulesApiUrl, githubToken);
+    let createdRules;
+    if (!rulesJson) {
+      const defaultRules = buildDefaultComponentRules(catalogJson, packageName);
+      rulesJson = JSON.stringify(defaultRules, null, 2);
+      const created = await putGitHubJsonFile(
+        rulesApiUrl,
+        githubToken,
+        rulesJson,
+        `Create component rules: ${packageName}`
+      );
+      createdRules = {
+        catalogName: `${packageName} rules.json`,
+        url: created.url
+      };
+    }
+    const rules = parseJsonObject(rulesJson);
+    if (!rules || readString(rules.documentType) !== "component-rules") {
+      throw new Error(`\u041D\u0435\u043A\u043E\u0440\u0440\u0435\u043A\u0442\u043D\u044B\u0439 rules.json \u0434\u043B\u044F \u043F\u0430\u043A\u0435\u0442\u0430 ${packageName}`);
+    }
+    const registryPath = joinRepoPath(
+      getRepoDirectory(filePath),
+      APOLLO_RULES_REGISTRY_FILE
+    );
+    const registryApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${registryPath}`;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const registryResponse = await fetch(registryApiUrl, {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: "application/vnd.github.v3+json"
+        }
+      });
+      if (registryResponse.status === 401) {
+        throw new Error(buildGitHubAuthError());
+      }
+      if (registryResponse.status === 403) {
+        throw new Error(buildGitHubAccessError());
+      }
+      if (registryResponse.status !== 404 && !registryResponse.ok) {
+        throw new Error(
+          `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C Apollo rules registry: ${registryResponse.status} ${registryResponse.statusText}`
+        );
+      }
+      let registry;
+      let registrySha;
+      if (registryResponse.ok) {
+        const registryFile = await registryResponse.json();
+        registrySha = registryFile.sha;
+        registry = registryFile.content && registryFile.encoding === "base64" ? parseJsonObject(base64ToString(registryFile.content)) : void 0;
+      }
+      const existingEntry = registry && Array.isArray(registry.entries) ? registry.entries.map((value) => readRecord(value)).find((value) => value && readString(value.packageName) === packageName) : void 0;
+      const entry = buildRulesRegistryEntry(
+        rules,
+        packageName,
+        packageRulesPath,
+        catalogJson,
+        existingEntry
+      );
+      const nextRegistry = buildUpdatedRulesRegistry(registry, entry);
+      try {
+        const published = await putGitHubJsonFile(
+          registryApiUrl,
+          githubToken,
+          JSON.stringify(nextRegistry, null, 2),
+          `Sync Apollo rules registry: ${packageName}`,
+          registrySha
+        );
+        return {
+          packageName,
+          createdRules,
+          registry: {
+            catalogName: APOLLO_RULES_REGISTRY_FILE,
+            url: published.url
+          }
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (attempt < 3 && message.indexOf("409") !== -1) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0431\u043D\u043E\u0432\u0438\u0442\u044C Apollo rules registry \u043F\u043E\u0441\u043B\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u044B\u0445 \u043F\u043E\u043F\u044B\u0442\u043E\u043A");
+  }
   async function publishWithToken(payload, githubToken) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
       if (!payload || !payload.json || !payload.catalogName) {
         throw new Error("Invalid publish payload");
@@ -2481,27 +2864,46 @@
       ];
       if (((_b = payload.meta) == null ? void 0 : _b.kind) === "components" && ((_c = payload.relatedArtifacts) == null ? void 0 : _c.length)) {
         for (const artifact of payload.relatedArtifacts) {
-          if (((_d = artifact.meta) == null ? void 0 : _d.kind) !== "component-index") {
+          if (((_d = artifact.meta) == null ? void 0 : _d.kind) === "component-index") {
+            const indexFilePath = buildComponentIndexPath(filePath);
+            publishTargets.push({
+              json: enrichComponentIndexJson(artifact.json, {
+                catalogPath: filePath,
+                indexPath: indexFilePath
+              }),
+              catalogName: artifact.catalogName.replace(/\.json$/, ""),
+              filePath: indexFilePath,
+              kind: artifact.meta.kind
+            });
             continue;
           }
-          const indexFilePath = buildComponentIndexPath(filePath);
-          publishTargets.push({
-            json: enrichComponentIndexJson(artifact.json, {
-              catalogPath: filePath,
-              indexPath: indexFilePath
-            }),
-            catalogName: artifact.catalogName.replace(/\.json$/, ""),
-            filePath: indexFilePath,
-            kind: artifact.meta.kind
-          });
+          if (((_e = artifact.meta) == null ? void 0 : _e.kind) === "component-package") {
+            const packageName = readString(artifact.meta.packageName);
+            const artifactFileName = readString(artifact.meta.fileName);
+            if (!packageName || !artifactFileName) {
+              console.warn("[CODE] skip component-package artifact without packageName/fileName");
+              continue;
+            }
+            const packageFilePath = buildComponentPackageArtifactPath(
+              filePath,
+              packageName,
+              artifactFileName
+            );
+            publishTargets.push({
+              json: artifact.json,
+              catalogName: artifact.catalogName.replace(/\.json$/, ""),
+              filePath: packageFilePath,
+              kind: artifact.meta.kind
+            });
+          }
         }
       }
       console.log("[CODE] publishing to GitHub:", {
         catalogName,
         filePath,
-        kind: (_e = payload.meta) == null ? void 0 : _e.kind,
+        kind: (_f = payload.meta) == null ? void 0 : _f.kind,
         fileKey: resolveCurrentFileKey(payload.meta),
-        pageName: (_f = payload.meta) == null ? void 0 : _f.pageName,
+        pageName: (_g = payload.meta) == null ? void 0 : _g.pageName,
         relatedArtifacts: publishTargets.length - 1,
         referenceUpdated: publishResolution.referenceUpdated,
         referencePath: publishResolution.referencePath
@@ -2509,8 +2911,9 @@
       const results = [];
       for (const target of publishTargets) {
         const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${target.filePath}`;
-        const encodedContent = stringToBase64(target.json);
         const sha = await getExistingFileSha(apiUrl, githubToken);
+        const targetJson = target.kind === "component-package" && sha ? await mergeComponentPackageArtifactJson(apiUrl, githubToken, target.json) : target.json;
+        const encodedContent = stringToBase64(targetJson);
         if (sha) {
           console.log("[CODE] existing file found, sha:", sha);
         } else {
@@ -2549,6 +2952,24 @@
           url: result.html_url
         });
         results.push({ catalogName: target.catalogName, url: result.html_url });
+      }
+      if (((_h = payload.meta) == null ? void 0 : _h.kind) === "components") {
+        const rulesRegistrySync = await syncApolloRulesRegistry(
+          filePath,
+          catalogName,
+          payload.json,
+          githubToken
+        );
+        if (rulesRegistrySync == null ? void 0 : rulesRegistrySync.createdRules) {
+          results.push(rulesRegistrySync.createdRules);
+        }
+        if (rulesRegistrySync == null ? void 0 : rulesRegistrySync.registry) {
+          results.push(rulesRegistrySync.registry);
+          console.log("[CODE] Apollo rules registry synced:", {
+            packageName: rulesRegistrySync.packageName,
+            createdRules: Boolean(rulesRegistrySync.createdRules)
+          });
+        }
       }
       if (publishResolution.referenceUpdated && publishResolution.referenceList) {
         await putReferenceCatalogList(

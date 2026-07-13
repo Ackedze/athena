@@ -2092,6 +2092,343 @@
           entries.push(entry);
         }
 
+        function buildComponentPackageArtifacts(exportData, descriptor) {
+          if (!exportData || !Array.isArray(exportData.components)) {
+            return [];
+          }
+          var packageName = getComponentPackageName(exportData, descriptor);
+          if (!packageName) {
+            return [];
+          }
+          return [
+            {
+              json: JSON.stringify(
+                buildAuditMappingPayload(exportData, descriptor, packageName),
+                null,
+                2,
+              ),
+              catalogName: packageName + ' audit-mapping.json',
+              meta: Object.assign({}, descriptor.meta, {
+                kind: 'component-package',
+                packageName: packageName,
+                fileName: 'audit-mapping.json',
+              }),
+            },
+            {
+              json: JSON.stringify(
+                buildAgentContextPayload(exportData, descriptor, packageName),
+                null,
+                2,
+              ),
+              catalogName: packageName + ' agent-context.json',
+              meta: Object.assign({}, descriptor.meta, {
+                kind: 'component-package',
+                packageName: packageName,
+                fileName: 'agent-context.json',
+              }),
+            },
+          ];
+        }
+
+        function getComponentPackageName(exportData, descriptor) {
+          var source = getCatalogSource(exportData);
+          if (
+            source &&
+            Array.isArray(source.files) &&
+            typeof source.files[0] === 'string' &&
+            source.files[0].trim()
+          ) {
+            return source.files[0].trim();
+          }
+          var baseName =
+            descriptor && descriptor.catalogBaseName
+              ? descriptor.catalogBaseName
+              : '';
+          var library =
+            (source && source.library) ||
+            (descriptor && descriptor.meta && descriptor.meta.library) ||
+            '';
+          var prefix = library ? library + ' -- ' : '';
+          if (prefix && baseName.indexOf(prefix) === 0) {
+            return baseName.slice(prefix.length).trim();
+          }
+          return baseName.replace(/\.json$/i, '').trim();
+        }
+
+        function getCatalogSource(exportData) {
+          if (exportData && exportData.source && typeof exportData.source === 'object') {
+            return exportData.source;
+          }
+          if (exportData && exportData.meta && typeof exportData.meta === 'object') {
+            return exportData.meta;
+          }
+          return {};
+        }
+
+        function buildSourceInfo(exportData, descriptor, packageName) {
+          var source = getCatalogSource(exportData);
+          var library =
+            source.library ||
+            (descriptor && descriptor.meta && descriptor.meta.library) ||
+            'Web _ Corp Components';
+          var files = Array.isArray(source.files) ? source.files : [packageName];
+          return {
+            rawCatalogPath:
+              'JSONS/web/components/web-corp/' +
+              descriptor.fileName,
+            library: library,
+            file: source.file || 'Web _ Corp Components',
+            generatedAt: source.generatedAt || new Date().toISOString(),
+            exportVersion: source.exportVersion || '',
+            files: files,
+          };
+        }
+
+        function buildApplicability(sourceInfo) {
+          return {
+            channels: ['b2b'],
+            platforms: ['desktop', 'mobile-web'],
+            source: 'path-policy',
+            updatedAt: String(sourceInfo.generatedAt || '').slice(0, 10),
+          };
+        }
+
+        function buildAuditMappingPayload(exportData, descriptor, packageName) {
+          var componentKey = 'web-corp.' + slugifyComponentPackage(packageName);
+          var sourceInfo = buildSourceInfo(exportData, descriptor, packageName);
+          var classification = getDefaultAuditClassification();
+          var categories = getDefaultAuditCategories();
+          var groupingOrder = ['component-property', 'layer-property'];
+          var evidencePolicy = {
+            showVariantBeforeDerivedVisuals: true,
+            useChangedNodeAsAffectedTarget: true,
+            keepLayerOverrideSeparateFromVariantChange: true,
+            suppressWrapperOwnedDiffsWhenEqualToEffectiveBaseline: true,
+          };
+          return {
+            schemaVersion: 1,
+            documentType: 'component-audit-mapping',
+            componentKey: componentKey,
+            status: 'generated-draft',
+            applicability: buildApplicability(sourceInfo),
+            generated: {
+              generatedAt: sourceInfo.generatedAt,
+              source: sourceInfo,
+              classification: classification,
+              categories: categories,
+              groupingOrder: groupingOrder,
+              evidencePolicy: evidencePolicy,
+            },
+            manual: {},
+            classification: classification,
+            categories: categories,
+            groupingOrder: groupingOrder,
+            evidencePolicy: evidencePolicy,
+          };
+        }
+
+        function buildAgentContextPayload(exportData, descriptor, packageName) {
+          var componentKey = 'web-corp.' + slugifyComponentPackage(packageName);
+          var sourceInfo = buildSourceInfo(exportData, descriptor, packageName);
+          var sourceFiles = [
+            'contract.generated.json',
+            'contract.overrides.json',
+            'rules.json',
+            'audit-mapping.json',
+            'examples.json',
+            'composition-contract.json',
+          ];
+          var components = exportData.components.map(function (component) {
+            return {
+              name: component.name || '',
+              key: component.key || '',
+              status: component.status || '',
+              role: component.role || '',
+              platform: component.platform || '',
+              variantProperties: getVariantProperties(component),
+            };
+          });
+          var summary = {
+            componentFamily: packageName,
+            library: sourceInfo.library,
+            purpose:
+              'Сгенерированный контекст компонента. Для рекомендаций используй exact component rules и pattern rules; не выводи дизайн-запреты только из этого сгенерированного контекста.',
+          };
+          var auditInterpretation = {
+            componentProperties: ['variant.*'],
+            layerProperties: [
+              'fill',
+              'stroke',
+              'styles.text',
+              'layout.*',
+              'radius',
+              'opacity',
+            ],
+            baselinePolicy:
+              'Сравнивай изменения layer с effective baseline текущего состояния компонента, если доступен host composition context.',
+          };
+          return {
+            schemaVersion: 1,
+            documentType: 'component-agent-context',
+            componentKey: componentKey,
+            status: 'generated-draft',
+            applicability: buildApplicability(sourceInfo),
+            generated: {
+              generatedAt: sourceInfo.generatedAt,
+              sourceFiles: sourceFiles,
+              source: sourceInfo,
+              summary: summary,
+              components: components,
+              auditInterpretation: auditInterpretation,
+            },
+            manual: {},
+            sourceFiles: sourceFiles,
+            source: sourceInfo,
+            summary: summary.purpose,
+            components: components,
+            includedComponents: components,
+            auditInterpretation: auditInterpretation,
+          };
+        }
+
+        function getDefaultAuditClassification() {
+          return [
+            {
+              match: { propertyPrefix: 'variant.' },
+              scope: 'component-property',
+              groupTitle: 'Параметры компонента',
+              priority: 10,
+              resetAction: 'reset-component-properties',
+            },
+            {
+              match: { propertyPrefix: 'layout.' },
+              scope: 'layer-property',
+              groupTitle: 'Параметры слоя',
+              priority: 20,
+              resetAction: 'reset-layer-properties',
+              effectiveBaseline: 'composition-contract',
+            },
+            {
+              match: { property: 'styles.text' },
+              scope: 'layer-property',
+              groupTitle: 'Параметры слоя',
+              displayName: 'Стиль текст',
+              priority: 30,
+              resetAction: 'reset-layer-properties',
+              effectiveBaseline: 'composition-contract',
+            },
+            {
+              match: { property: 'fill' },
+              scope: 'layer-property',
+              groupTitle: 'Параметры слоя',
+              priority: 40,
+              resetAction: 'reset-layer-properties',
+              effectiveBaseline: 'composition-contract',
+            },
+            {
+              match: { property: 'stroke' },
+              scope: 'layer-property',
+              groupTitle: 'Параметры слоя',
+              priority: 50,
+              resetAction: 'reset-layer-properties',
+              effectiveBaseline: 'composition-contract',
+            },
+          ];
+        }
+
+        function getDefaultAuditCategories() {
+          return [
+            {
+              when: { propertyPrefix: 'variant.' },
+              category: 'component-property',
+              resetSurface: 'parameters',
+            },
+            {
+              when: { propertyPrefix: 'layout.' },
+              category: 'layer-property',
+              resetSurface: 'layer',
+              baselinePolicy:
+                'Use component effective baseline after host and nested variant resolution.',
+            },
+            {
+              when: { propertyPrefix: 'styles.' },
+              category: 'layer-property',
+              resetSurface: 'layer',
+              baselinePolicy:
+                'Use resolved style label or style id from the effective baseline.',
+            },
+            {
+              when: { property: 'fill' },
+              category: 'layer-property',
+              resetSurface: 'layer',
+              baselinePolicy:
+                'Use resolved token/style/color from the effective baseline.',
+            },
+            {
+              when: { property: 'stroke' },
+              category: 'layer-property',
+              resetSurface: 'layer',
+              baselinePolicy:
+                'Use resolved token/style/color from the effective baseline.',
+            },
+          ];
+        }
+
+        function getVariantProperties(component) {
+          var valuesByProperty = {};
+          var variants = Array.isArray(component.variants)
+            ? component.variants
+            : [];
+          variants.forEach(function (variant) {
+            var parsed = parseVariantPropertiesFromName(variant.name || '');
+            Object.keys(parsed).forEach(function (property) {
+              if (!valuesByProperty[property]) {
+                valuesByProperty[property] = {};
+              }
+              valuesByProperty[property][parsed[property]] = true;
+            });
+          });
+          var result = {};
+          Object.keys(valuesByProperty)
+            .sort()
+            .forEach(function (property) {
+              result[property] = Object.keys(valuesByProperty[property]).sort();
+            });
+          return result;
+        }
+
+        function parseVariantPropertiesFromName(name) {
+          var result = {};
+          String(name || '')
+            .split(',')
+            .forEach(function (part) {
+              var segment = part.trim();
+              var index = segment.indexOf('=');
+              if (index <= 0) {
+                return;
+              }
+              var key = segment.slice(0, index).trim();
+              var value = segment.slice(index + 1).trim();
+              if (key && value) {
+                result[key] = value;
+              }
+            });
+          return result;
+        }
+
+        function slugifyComponentPackage(value) {
+          return String(value || '')
+            .replace(/\[[DMT]\]/gi, ' ')
+            .replace(/^[DMT]\]\s*/i, ' ')
+            .replace(/\[[^\]]+\]/g, ' ')
+            .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+            .replace(/[^\wА-Яа-яЁё]+/g, '-')
+            .replace(/_+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .toLowerCase();
+        }
+
         function syncRunnerPublishMetaForActiveTab() {
           var descriptor = getPublishDescriptorForTab(activeTab);
           if (!descriptor || !descriptor.fileName) {
@@ -2141,25 +2478,46 @@
           if (!descriptor) {
             return { error: 'Не удалось подготовить метаданные компонентов' };
           }
+          var exportDataForIndex = lastExportData;
+          try {
+            var parsedContent = JSON.parse(content);
+            if (
+              parsedContent &&
+              Array.isArray(parsedContent.components)
+            ) {
+              exportDataForIndex = parsedContent;
+            }
+          } catch (error) {
+            console.warn(
+              '[UI] failed to parse publish content for component index, falling back to lastExportData',
+              error,
+            );
+          }
+          var relatedArtifacts = [
+            {
+              json: JSON.stringify(
+                buildComponentIndexPayload(exportDataForIndex, descriptor),
+                null,
+                2,
+              ),
+              catalogName:
+                descriptor.catalogBaseName.replace(/\.json$/, '') +
+                '.index.json',
+              meta: Object.assign({}, descriptor.meta, {
+                kind: 'component-index',
+              }),
+            },
+          ];
+          buildComponentPackageArtifacts(exportDataForIndex, descriptor).forEach(
+            function (artifact) {
+              relatedArtifacts.push(artifact);
+            },
+          );
           return {
             json: content,
             meta: descriptor.meta,
             fileName: descriptor.fileName,
-            relatedArtifacts: [
-              {
-                json: JSON.stringify(
-                  buildComponentIndexPayload(lastExportData, descriptor),
-                  null,
-                  2,
-                ),
-                catalogName:
-                  descriptor.catalogBaseName.replace(/\.json$/, '') +
-                  '.index.json',
-                meta: Object.assign({}, descriptor.meta, {
-                  kind: 'component-index',
-                }),
-              },
-            ],
+            relatedArtifacts: relatedArtifacts,
           };
         }
 

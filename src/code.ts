@@ -19,6 +19,8 @@ const pagedExport = createPagedExportController(sendExportResult);
 const GITHUB_OWNER = 'ackedze';
 const GITHUB_REPO = 'design-system_ab';
 const REFERENCE_SOURCES_PATH = 'JSONS/referenceSourcesMVP.json';
+const WEB_CORP_COMPONENTS_PATH = 'JSONS/web/components/web-corp';
+const APOLLO_RULES_REGISTRY_FILE = 'apollo-rules-registry.json';
 
 // Роутим UI events на export/collect actions.
 figma.ui.onmessage = (msg) => {
@@ -151,7 +153,12 @@ interface PublishPayload {
   relatedArtifacts?: PublishRelatedArtifact[];
 }
 
-type PublishArtifactKind = 'components' | 'tokens' | 'styles' | 'component-index';
+type PublishArtifactKind =
+  | 'components'
+  | 'tokens'
+  | 'styles'
+  | 'component-index'
+  | 'component-package';
 
 interface PublishMeta extends Record<string, unknown> {
   kind?: PublishArtifactKind;
@@ -164,6 +171,24 @@ interface PublishRelatedArtifact {
   json: string;
   catalogName: string;
   meta?: PublishMeta;
+}
+
+interface PublishTarget {
+  json: string;
+  catalogName: string;
+  filePath: string;
+  kind?: PublishArtifactKind;
+}
+
+interface PublishedFileResult {
+  catalogName: string;
+  url: string;
+}
+
+interface ApolloRulesRegistrySyncResult {
+  registry?: PublishedFileResult;
+  createdRules?: PublishedFileResult;
+  packageName: string;
 }
 
 interface ReferenceCatalogSource {
@@ -890,6 +915,16 @@ function buildComponentIndexPath(catalogPath: string): string {
   return joinRepoPath(rootPrefix ? `${manifestRoot}/indexes` : 'indexes', indexRelativePath);
 }
 
+function buildComponentPackageArtifactPath(
+  catalogPath: string,
+  packageName: string,
+  fileName: string,
+): string {
+  const normalizedCatalogPath = normalizeRepoPath(catalogPath);
+  const catalogDirectory = getRepoDirectory(normalizedCatalogPath);
+  return joinRepoPath(catalogDirectory, `${packageName}/${fileName}`);
+}
+
 function enrichComponentIndexJson(
   rawJson: string,
   context: {
@@ -933,6 +968,129 @@ function enrichComponentIndexJson(
   return JSON.stringify(payload, null, 2);
 }
 
+async function mergeComponentPackageArtifactJson(
+  apiUrl: string,
+  githubToken: string,
+  nextJson: string,
+): Promise<string> {
+  const existingJson = await fetchExistingGitHubJson(apiUrl, githubToken);
+  if (!existingJson) {
+    return nextJson;
+  }
+
+  const existing = parseJsonObject(existingJson);
+  const next = parseJsonObject(nextJson);
+  if (!existing || !next) {
+    return nextJson;
+  }
+
+  const documentType = readString(next.documentType);
+  if (documentType === 'component-agent-context') {
+    return JSON.stringify(mergeAgentContextArtifact(existing, next), null, 2);
+  }
+  if (documentType === 'component-audit-mapping') {
+    return JSON.stringify(mergeAuditMappingArtifact(existing, next), null, 2);
+  }
+
+  return nextJson;
+}
+
+function mergeAgentContextArtifact(
+  existing: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const generated = readRecord(next.generated) || {};
+  const manual = readRecord(existing.manual) || extractAgentContextManual(existing);
+  return stripUndefinedProperties({
+    ...next,
+    status: readString(existing.status) || readString(next.status) || 'draft',
+    manual,
+    summary: readString(manual.summary) || readString(next.summary),
+    criticalBaselines: manual.criticalBaselines || next.criticalBaselines,
+    agentInstructions: manual.agentInstructions || next.agentInstructions,
+    codeExports: manual.codeExports || next.codeExports,
+    auditInterpretation: manual.auditInterpretation || next.auditInterpretation,
+    source: generated.source || next.source,
+    sourceFiles: generated.sourceFiles || next.sourceFiles,
+    components: generated.components || next.components,
+    includedComponents: generated.components || next.includedComponents,
+  });
+}
+
+function mergeAuditMappingArtifact(
+  existing: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const generated = readRecord(next.generated) || {};
+  const manual = readRecord(existing.manual) || extractAuditMappingManual(existing);
+  return stripUndefinedProperties({
+    ...next,
+    status: readString(existing.status) || readString(next.status) || 'draft',
+    manual,
+    classification: generated.classification || next.classification,
+    groupingOrder: generated.groupingOrder || next.groupingOrder,
+    evidencePolicy: generated.evidencePolicy || next.evidencePolicy,
+    categories: manual.categories || generated.categories || next.categories,
+    hostIntegrationNote: manual.hostIntegrationNote || next.hostIntegrationNote,
+    codeExportAliases: manual.codeExportAliases || next.codeExportAliases,
+  });
+}
+
+function extractAgentContextManual(
+  existing: Record<string, unknown>,
+): Record<string, unknown> {
+  return stripUndefinedProperties({
+    summary: existing.summary,
+    criticalBaselines: existing.criticalBaselines,
+    agentInstructions: existing.agentInstructions,
+    codeExports: existing.codeExports,
+    auditInterpretation: existing.auditInterpretation,
+    notes: existing.notes,
+  });
+}
+
+function extractAuditMappingManual(
+  existing: Record<string, unknown>,
+): Record<string, unknown> {
+  return stripUndefinedProperties({
+    categories: existing.categories,
+    hostIntegrationNote: existing.hostIntegrationNote,
+    codeExportAliases: existing.codeExportAliases,
+    notes: existing.notes,
+  });
+}
+
+function stripUndefinedProperties(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  Object.keys(input).forEach((key) => {
+    if (input[key] !== undefined) {
+      output[key] = input[key];
+    }
+  });
+  return output;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    console.warn('[CODE] failed to parse GitHub json for merge', error);
+  }
+  return undefined;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 async function getExistingFileSha(
   apiUrl: string,
   githubToken: string,
@@ -963,6 +1121,395 @@ async function getExistingFileSha(
   return fileData.sha;
 }
 
+async function fetchExistingGitHubJson(
+  apiUrl: string,
+  githubToken: string,
+): Promise<string | undefined> {
+  const response = await fetch(apiUrl, {
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (response.status === 404) {
+    return undefined;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Не удалось прочитать существующий package artifact из GitHub: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const fileData = (await response.json()) as {
+    content?: string;
+    encoding?: string;
+  };
+  if (!fileData.content || fileData.encoding !== 'base64') {
+    return undefined;
+  }
+  return base64ToString(fileData.content);
+}
+
+function isWebCorpComponentCatalogPath(filePath: string): boolean {
+  const normalizedPath = normalizeRepoPath(filePath).replace(/\\/g, '/');
+  return (
+    normalizedPath === WEB_CORP_COMPONENTS_PATH ||
+    normalizedPath.startsWith(`${WEB_CORP_COMPONENTS_PATH}/`)
+  );
+}
+
+function getComponentPackageNameFromCatalog(
+  catalogJson: string,
+  catalogName: string,
+): string | undefined {
+  const catalog = parseJsonObject(catalogJson);
+  const source = catalog ? readRecord(catalog.source) : undefined;
+  const sourceFiles = source && Array.isArray(source.files) ? source.files : [];
+  const sourceName = sourceFiles.find(
+    (value) => typeof value === 'string' && value.trim(),
+  );
+  const fallbackName = stripJsonExtension(catalogName).replace(
+    /^Web _ Corp Components -- /,
+    '',
+  );
+  const packageName = String(sourceName || fallbackName)
+    .replace(/::/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return packageName || undefined;
+}
+
+function slugifyComponentName(value: string): string {
+  return String(value || '')
+    .replace(/\[[DMT]\]/gi, ' ')
+    .replace(/^[DMT]\]\s*/i, ' ')
+    .replace(/\[[^\]]+\]/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[^\wА-Яа-яЁё]+/g, '-')
+    .replace(/_+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+}
+
+function getDefaultComponentKey(packageName: string): string {
+  return `web-corp.${slugifyComponentName(packageName)}`;
+}
+
+function removeLeadingComponentMarkers(value: string): string {
+  return String(value || '')
+    .replace(/^[^\wА-Яа-яЁё\[]+\s*/u, '')
+    .trim();
+}
+
+function addAlias(aliases: Set<string>, value: unknown): void {
+  if (typeof value !== 'string') return;
+  const normalized = value.trim();
+  if (normalized) {
+    aliases.add(normalized);
+  }
+}
+
+function getCatalogAliases(catalogJson: string, packageName: string): string[] {
+  const aliases = new Set<string>();
+  addAlias(aliases, packageName);
+
+  const catalog = parseJsonObject(catalogJson);
+  const components = catalog && Array.isArray(catalog.components)
+    ? catalog.components
+    : [];
+  components.forEach((component) => {
+    const record = readRecord(component);
+    const name = record ? readString(record.name) : undefined;
+    if (!name) return;
+    addAlias(aliases, name);
+    addAlias(aliases, removeLeadingComponentMarkers(name));
+  });
+
+  return Array.from(aliases).sort((left, right) => left.localeCompare(right));
+}
+
+function buildDefaultComponentRules(
+  catalogJson: string,
+  packageName: string,
+): Record<string, unknown> {
+  const componentKey = getDefaultComponentKey(packageName);
+  const aliases = getCatalogAliases(catalogJson, packageName);
+
+  return {
+    schemaVersion: 1,
+    documentType: 'component-rules',
+    componentKey,
+    status: 'generated-draft',
+    rules: [
+      {
+        ruleId: `component:${componentKey}.component-properties-are-first-class`,
+        severity: 'info',
+        source: 'component-contract',
+        appliesTo: 'variant.*',
+        checkType: 'deterministic',
+        matchKind: 'exact_component_rule',
+        target: {
+          component: packageName,
+          layers: aliases,
+        },
+        ruleText:
+          'Изменения variant/property в этом семействе компонентов являются component-property customizations. Показывай их отдельно от производных визуальных изменений layer.',
+      },
+      {
+        ruleId: `component:${componentKey}.layer-properties-use-effective-baseline`,
+        severity: 'warning',
+        source: 'composition-contract',
+        appliesTo: 'layout.*|styles.text|fill|stroke|radius|opacity',
+        checkType: 'deterministic',
+        matchKind: 'exact_component_rule',
+        target: {
+          component: packageName,
+          layers: aliases,
+        },
+        ruleText:
+          'Изменения layer/style внутри этого семейства компонентов нужно сравнивать с effective baseline текущего component variant и nested owner context.',
+      },
+      {
+        ruleId: `component:${componentKey}.lifecycle-context-is-informational`,
+        severity: 'info',
+        source: 'component-contract',
+        appliesTo: 'component.status',
+        checkType: 'manual',
+        ruleText:
+          'Lifecycle status компонента является контекстом для агента. Не считай его дизайн-нарушением, если не найден отдельный pattern или exact design rule.',
+      },
+    ],
+  };
+}
+
+async function putGitHubJsonFile(
+  apiUrl: string,
+  githubToken: string,
+  json: string,
+  message: string,
+  sha?: string,
+): Promise<PublishedFileResult> {
+  const requestBody: Record<string, unknown> = {
+    message,
+    content: stringToBase64(`${json.trim()}\n`),
+  };
+  if (sha) {
+    requestBody.sha = sha;
+  }
+
+  const response = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    const errorMessage = errorData.message || response.statusText;
+    throw new Error(`GitHub API error (${response.status}): ${errorMessage}`);
+  }
+
+  const result = (await response.json()) as { html_url?: string };
+  return {
+    catalogName: message,
+    url: result.html_url || '',
+  };
+}
+
+function buildRulesRegistryEntry(
+  rules: Record<string, unknown>,
+  packageName: string,
+  rulesFilePath: string,
+  catalogJson: string,
+  existingEntry?: Record<string, unknown>,
+): Record<string, unknown> {
+  const aliases = new Set<string>();
+  const existingAliases = existingEntry && Array.isArray(existingEntry.aliases)
+    ? existingEntry.aliases
+    : [];
+  existingAliases.forEach((alias) => addAlias(aliases, alias));
+  getCatalogAliases(catalogJson, packageName).forEach((alias) =>
+    addAlias(aliases, alias),
+  );
+
+  return {
+    componentKey:
+      readString(rules.componentKey) || getDefaultComponentKey(packageName),
+    packageName,
+    aliases: Array.from(aliases).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    rulesFile: rulesFilePath,
+    rules: Array.isArray(rules.rules) ? rules.rules : [],
+  };
+}
+
+function buildUpdatedRulesRegistry(
+  existingRegistry: Record<string, unknown> | undefined,
+  entry: Record<string, unknown>,
+): Record<string, unknown> {
+  const existingEntries = existingRegistry && Array.isArray(existingRegistry.entries)
+    ? existingRegistry.entries
+    : [];
+  const packageName = readString(entry.packageName) || '';
+  const componentKey = readString(entry.componentKey) || '';
+  const entries = existingEntries
+    .map((value) => readRecord(value))
+    .filter((value): value is Record<string, unknown> => Boolean(value))
+    .filter((value) => {
+      return (
+        readString(value.packageName) !== packageName &&
+        readString(value.componentKey) !== componentKey
+      );
+    });
+
+  entries.push(entry);
+  entries.sort((left, right) => {
+    const leftName = readString(left.packageName) || '';
+    const rightName = readString(right.packageName) || '';
+    return leftName.localeCompare(rightName);
+  });
+
+  return {
+    schemaVersion: 1,
+    documentType: 'apollo-component-rules-registry',
+    generatedAt: new Date().toISOString(),
+    entries,
+  };
+}
+
+async function syncApolloRulesRegistry(
+  filePath: string,
+  catalogName: string,
+  catalogJson: string,
+  githubToken: string,
+): Promise<ApolloRulesRegistrySyncResult | undefined> {
+  if (!isWebCorpComponentCatalogPath(filePath)) {
+    return undefined;
+  }
+
+  const packageName = getComponentPackageNameFromCatalog(catalogJson, catalogName);
+  if (!packageName) {
+    throw new Error('Не удалось определить имя пакета для обновления rules registry');
+  }
+
+  const packageRulesPath = buildComponentPackageArtifactPath(
+    filePath,
+    packageName,
+    'rules.json',
+  );
+  const rulesApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${packageRulesPath}`;
+  let rulesJson = await fetchExistingGitHubJson(rulesApiUrl, githubToken);
+  let createdRules: PublishedFileResult | undefined;
+
+  if (!rulesJson) {
+    const defaultRules = buildDefaultComponentRules(catalogJson, packageName);
+    rulesJson = JSON.stringify(defaultRules, null, 2);
+    const created = await putGitHubJsonFile(
+      rulesApiUrl,
+      githubToken,
+      rulesJson,
+      `Create component rules: ${packageName}`,
+    );
+    createdRules = {
+      catalogName: `${packageName} rules.json`,
+      url: created.url,
+    };
+  }
+
+  const rules = parseJsonObject(rulesJson);
+  if (!rules || readString(rules.documentType) !== 'component-rules') {
+    throw new Error(`Некорректный rules.json для пакета ${packageName}`);
+  }
+
+  const registryPath = joinRepoPath(
+    getRepoDirectory(filePath),
+    APOLLO_RULES_REGISTRY_FILE,
+  );
+  const registryApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${registryPath}`;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const registryResponse = await fetch(registryApiUrl, {
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (registryResponse.status === 401) {
+      throw new Error(buildGitHubAuthError());
+    }
+    if (registryResponse.status === 403) {
+      throw new Error(buildGitHubAccessError());
+    }
+    if (registryResponse.status !== 404 && !registryResponse.ok) {
+      throw new Error(
+        `Не удалось прочитать Apollo rules registry: ${registryResponse.status} ${registryResponse.statusText}`,
+      );
+    }
+
+    let registry: Record<string, unknown> | undefined;
+    let registrySha: string | undefined;
+    if (registryResponse.ok) {
+      const registryFile = (await registryResponse.json()) as {
+        content?: string;
+        encoding?: string;
+        sha?: string;
+      };
+      registrySha = registryFile.sha;
+      registry = registryFile.content && registryFile.encoding === 'base64'
+        ? parseJsonObject(base64ToString(registryFile.content))
+        : undefined;
+    }
+
+    const existingEntry = registry && Array.isArray(registry.entries)
+      ? registry.entries
+          .map((value) => readRecord(value))
+          .find((value) => value && readString(value.packageName) === packageName)
+      : undefined;
+    const entry = buildRulesRegistryEntry(
+      rules,
+      packageName,
+      packageRulesPath,
+      catalogJson,
+      existingEntry,
+    );
+    const nextRegistry = buildUpdatedRulesRegistry(registry, entry);
+
+    try {
+      const published = await putGitHubJsonFile(
+        registryApiUrl,
+        githubToken,
+        JSON.stringify(nextRegistry, null, 2),
+        `Sync Apollo rules registry: ${packageName}`,
+        registrySha,
+      );
+      return {
+        packageName,
+        createdRules,
+        registry: {
+          catalogName: APOLLO_RULES_REGISTRY_FILE,
+          url: published.url,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (attempt < 3 && message.indexOf('409') !== -1) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error('Не удалось обновить Apollo rules registry после повторных попыток');
+}
+
 async function publishWithToken(payload: PublishPayload, githubToken: string) {
   try {
     if (!payload || !payload.json || !payload.catalogName) {
@@ -979,7 +1526,7 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     const repoName = GITHUB_REPO;
     const publishResolution = await resolvePublishFilePath(payload, githubToken);
     const filePath = publishResolution.filePath;
-    const publishTargets = [
+    const publishTargets: PublishTarget[] = [
       {
         json: payload.json,
         catalogName,
@@ -990,20 +1537,39 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
 
     if (payload.meta?.kind === 'components' && payload.relatedArtifacts?.length) {
       for (const artifact of payload.relatedArtifacts) {
-        if (artifact.meta?.kind !== 'component-index') {
+        if (artifact.meta?.kind === 'component-index') {
+          const indexFilePath = buildComponentIndexPath(filePath);
+          publishTargets.push({
+            json: enrichComponentIndexJson(artifact.json, {
+              catalogPath: filePath,
+              indexPath: indexFilePath,
+            }),
+            catalogName: artifact.catalogName.replace(/\.json$/, ''),
+            filePath: indexFilePath,
+            kind: artifact.meta.kind,
+          });
           continue;
         }
 
-        const indexFilePath = buildComponentIndexPath(filePath);
-        publishTargets.push({
-          json: enrichComponentIndexJson(artifact.json, {
-            catalogPath: filePath,
-            indexPath: indexFilePath,
-          }),
-          catalogName: artifact.catalogName.replace(/\.json$/, ''),
-          filePath: indexFilePath,
-          kind: artifact.meta.kind,
-        });
+        if (artifact.meta?.kind === 'component-package') {
+          const packageName = readString(artifact.meta.packageName);
+          const artifactFileName = readString(artifact.meta.fileName);
+          if (!packageName || !artifactFileName) {
+            console.warn('[CODE] skip component-package artifact without packageName/fileName');
+            continue;
+          }
+          const packageFilePath = buildComponentPackageArtifactPath(
+            filePath,
+            packageName,
+            artifactFileName,
+          );
+          publishTargets.push({
+            json: artifact.json,
+            catalogName: artifact.catalogName.replace(/\.json$/, ''),
+            filePath: packageFilePath,
+            kind: artifact.meta.kind,
+          });
+        }
       }
     }
 
@@ -1021,8 +1587,12 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
     const results: Array<{ catalogName: string; url: string }> = [];
     for (const target of publishTargets) {
       const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${target.filePath}`;
-      const encodedContent = stringToBase64(target.json);
       const sha = await getExistingFileSha(apiUrl, githubToken);
+      const targetJson =
+        target.kind === 'component-package' && sha
+          ? await mergeComponentPackageArtifactJson(apiUrl, githubToken, target.json)
+          : target.json;
+      const encodedContent = stringToBase64(targetJson);
       if (sha) {
         console.log('[CODE] existing file found, sha:', sha);
       } else {
@@ -1067,6 +1637,25 @@ async function publishWithToken(payload: PublishPayload, githubToken: string) {
         url: result.html_url,
       });
       results.push({ catalogName: target.catalogName, url: result.html_url });
+    }
+
+    if (payload.meta?.kind === 'components') {
+      const rulesRegistrySync = await syncApolloRulesRegistry(
+        filePath,
+        catalogName,
+        payload.json,
+        githubToken,
+      );
+      if (rulesRegistrySync?.createdRules) {
+        results.push(rulesRegistrySync.createdRules);
+      }
+      if (rulesRegistrySync?.registry) {
+        results.push(rulesRegistrySync.registry);
+        console.log('[CODE] Apollo rules registry synced:', {
+          packageName: rulesRegistrySync.packageName,
+          createdRules: Boolean(rulesRegistrySync.createdRules),
+        });
+      }
     }
 
     if (publishResolution.referenceUpdated && publishResolution.referenceList) {

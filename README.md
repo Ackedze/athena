@@ -11,6 +11,7 @@ Figma-плагин для сбора и публикации JSON-артефак
 - Работать с reference-файлом нового формата `libraries[].catalogs[]`.
 - Публиковать компоненты, токены и стили напрямую в GitHub-репозиторий `ackedze/design-system_ab`.
 - Автоматически регистрировать новые page-каталоги в `JSONS/referenceSourcesMVP.json`, если для них ещё нет reference entry.
+- Для web-corp каталогов создавать отсутствующий базовый `rules.json` и синхронизировать его запись в `apollo-rules-registry.json`, не перезаписывая существующие ручные правила.
 - Отдавать runner-friendly publish context через DOM marker для automation-runner.
 
 ## Ключевые файлы
@@ -67,8 +68,10 @@ code.ts -> UI
 9. Если matching entry нет, Athena добавляет новый catalog entry в соответствующую библиотеку, подбирая путь по уже существующей структуре этой библиотеки; для новой библиотеки создаётся новая запись.
 10. `code.ts` публикует JSON через GitHub Contents API по resolved reference path.
 11. Для `components` вместе с каталогом публикуется связанный `component-index` в `JSONS/indexes/`.
-12. `referenceSourcesMVP.json` обновляется после успешной публикации JSON и index-файлов, чтобы Apollo не получил ссылку на ещё несуществующий каталог.
-13. Publish transport использует UTF-8-safe base64-кодирование, поэтому кириллица и другие non-ASCII строки не должны повреждаться при записи в GitHub.
+12. Для каталогов `JSONS/web/components/web-corp/` Athena определяет package name. Если `rules.json` ещё отсутствует, она публикует базовый generated-draft; существующий `rules.json` не изменяется.
+13. После этого Athena обновляет только запись опубликованного пакета в `JSONS/web/components/web-corp/apollo-rules-registry.json`. Registry получает текущие rules, aliases из свежего каталога и путь к source-файлу правил. При конфликте параллельных публикаций запись повторяется до трёх раз.
+14. `referenceSourcesMVP.json` обновляется после успешной публикации JSON, package-артефактов, index-файлов и rule registry, чтобы Apollo не получил ссылку на ещё несуществующий каталог.
+15. Publish transport использует UTF-8-safe base64-кодирование, поэтому кириллица и другие non-ASCII строки не должны повреждаться при записи в GitHub.
 
 ## Использование
 
