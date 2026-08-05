@@ -2021,6 +2021,7 @@
           var componentEntries = [];
           var keyEntries = [];
           var seenKeys = {};
+          var channelCounterparts = buildChannelCounterpartMap(components);
 
           components.forEach(function (component) {
             if (!component || !component.key) return;
@@ -2035,6 +2036,8 @@
                       key: variant.key,
                       id: variant.id || '',
                       name: variant.name || '',
+                      channelCounterparts:
+                        channelCounterparts.variants[variant.key] || undefined,
                     };
                   })
               : [];
@@ -2048,6 +2051,8 @@
               category: component.category || '',
               defaultVariant: component.defaultVariant || null,
               variants: variants,
+              channelCounterparts:
+                channelCounterparts.components[component.key] || undefined,
             });
 
             addIndexKeyEntry(keyEntries, seenKeys, {
@@ -2084,6 +2089,144 @@
             components: componentEntries,
             entries: keyEntries,
           };
+        }
+
+        function buildChannelCounterpartMap(components) {
+          var families = {};
+          var componentResults = {};
+          var variantResults = {};
+
+          components.forEach(function (component) {
+            if (!component || !component.key) return;
+            var platform = normalizeIndexPlatform(component.platform);
+            if (platform !== 'desktop' && platform !== 'mobile-web') return;
+
+            var familyName = normalizeChannelFamilyName(component.name);
+            if (!familyName) return;
+            var familyKey = [
+              familyName,
+              String(component.role || '').trim().toLowerCase(),
+              String(component.status || '').trim().toLowerCase(),
+            ].join('|');
+
+            if (!families[familyKey]) {
+              families[familyKey] = { desktop: [], mobileWeb: [] };
+            }
+            if (platform === 'desktop') {
+              families[familyKey].desktop.push(component);
+            } else {
+              families[familyKey].mobileWeb.push(component);
+            }
+          });
+
+          Object.keys(families).forEach(function (familyKey) {
+            var family = families[familyKey];
+            if (family.desktop.length !== 1 || family.mobileWeb.length !== 1) {
+              return;
+            }
+
+            var desktop = family.desktop[0];
+            var mobileWeb = family.mobileWeb[0];
+            var desktopTargetKey = resolveSafeChannelTargetKey(desktop);
+            var mobileWebTargetKey = resolveSafeChannelTargetKey(mobileWeb);
+            if (mobileWebTargetKey) {
+              componentResults[desktop.key] = {
+                mobileWeb: buildChannelTarget(mobileWebTargetKey, mobileWeb.name),
+              };
+            }
+            if (desktopTargetKey) {
+              componentResults[mobileWeb.key] = {
+                desktop: buildChannelTarget(desktopTargetKey, desktop.name),
+              };
+            }
+            registerVariantChannelCounterparts(
+              desktop,
+              mobileWeb,
+              'mobileWeb',
+              variantResults,
+            );
+            registerVariantChannelCounterparts(
+              mobileWeb,
+              desktop,
+              'desktop',
+              variantResults,
+            );
+          });
+
+          return { components: componentResults, variants: variantResults };
+        }
+
+        function registerVariantChannelCounterparts(
+          source,
+          target,
+          targetPlatform,
+          result,
+        ) {
+          var targetVariants = buildUniqueVariantNameMap(target.variants || []);
+          (source.variants || []).forEach(function (sourceVariant) {
+            if (!sourceVariant || !sourceVariant.key) return;
+            var variantName = normalizeVariantName(sourceVariant.name);
+            if (!variantName) return;
+            var targetVariant = targetVariants[variantName];
+            if (!targetVariant || !targetVariant.key) return;
+            var counterpart = {};
+            counterpart[targetPlatform] = buildChannelTarget(
+              targetVariant.key,
+              target.name,
+            );
+            result[sourceVariant.key] = counterpart;
+          });
+        }
+
+        function buildUniqueVariantNameMap(variants) {
+          var result = {};
+          variants.forEach(function (variant) {
+            if (!variant || !variant.key) return;
+            var variantName = normalizeVariantName(variant.name);
+            if (!variantName) return;
+            if (Object.prototype.hasOwnProperty.call(result, variantName)) {
+              result[variantName] = null;
+            } else {
+              result[variantName] = variant;
+            }
+          });
+          return result;
+        }
+
+        function resolveSafeChannelTargetKey(component) {
+          if (component.defaultVariant) return component.defaultVariant;
+          var variants = (component.variants || []).filter(function (variant) {
+            return variant && variant.key;
+          });
+          return variants.length === 1 ? variants[0].key : '';
+        }
+
+        function buildChannelTarget(componentKey, componentName) {
+          return {
+            componentKey: componentKey,
+            componentName: componentName || '',
+          };
+        }
+
+        function normalizeVariantName(value) {
+          return String(value || '').trim();
+        }
+
+        function normalizeIndexPlatform(value) {
+          var normalized = String(value || '').trim().toLowerCase();
+          if (normalized === 'desktop') return 'desktop';
+          if (normalized === 'mobile-web' || normalized === 'mobile web') {
+            return 'mobile-web';
+          }
+          return '';
+        }
+
+        function normalizeChannelFamilyName(value) {
+          return String(value || '')
+            .replace(/\[(d|m)\]/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
         }
 
         function addIndexKeyEntry(entries, seenKeys, entry) {

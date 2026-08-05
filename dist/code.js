@@ -1466,9 +1466,6 @@
   }
 
   // src/tokenExport.ts
-  var blueTintTokensUrl = "https://ackedze.github.io/nemesis/JSONS/BlueTint Base Colors -- BlueTint Base Colors.json";
-  var blueTintVariableMap = null;
-  var blueTintLoadPromise = null;
   async function collectTokensFromFile() {
     if (!figma.variables) {
       throw new Error("Variables API not \u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u0432 \u044D\u0442\u043E\u043C \u0444\u0430\u0439\u043B\u0435");
@@ -1481,9 +1478,9 @@
     variables.forEach((variable) => {
       variableById.set(variable.id, variable);
     });
-    await ensureBlueTintVariablesLoaded();
-    const collectionExports = collections.map(
-      (collection) => {
+    const resolver = createVariableValueResolver(variableById);
+    const collectionExports = await Promise.all(
+      collections.map(async (collection) => {
         const collectionVariables = collection.variableIds.map((id) => variableById.get(id)).filter((variable) => Boolean(variable));
         const modes = Array.isArray(collection.modes) ? collection.modes : [];
         return {
@@ -1497,11 +1494,17 @@
             modeId: mode.modeId,
             name: mode.name
           })),
-          variables: collectionVariables.map(
-            (variable) => serializeVariable(variable, collection.name || collection.key)
+          variables: await Promise.all(
+            collectionVariables.map(
+              (variable) => serializeVariable(
+                variable,
+                resolver,
+                collection.name || collection.key
+              )
+            )
           )
         };
-      }
+      })
     );
     return {
       meta: {
@@ -1512,11 +1515,26 @@
       collections: collectionExports
     };
   }
-  function serializeVariable(variable, collectionName) {
+  async function serializeVariable(variable, resolver, collectionName) {
     const rawName = variable.name || variable.key;
     const nameParts = splitVariableName(rawName);
     const originalValues = copyValuesByMode(variable.valuesByMode);
-    const resolvedValues = resolveAliasValues(originalValues);
+    const resolutions = await resolveValuesByMode(originalValues, resolver);
+    const actualValuesByMode = {};
+    const actualHexByMode = {};
+    const resolutionByMode = {};
+    for (const modeId of Object.keys(resolutions)) {
+      const resolution = resolutions[modeId];
+      actualValuesByMode[modeId] = resolution.values;
+      actualHexByMode[modeId] = uniqueStrings(
+        resolution.values.map((value) => convertValueToHex(value)).filter((value) => Boolean(value))
+      );
+      resolutionByMode[modeId] = {
+        status: resolution.status,
+        aliasIds: resolution.aliasIds,
+        unresolvedAliasIds: resolution.unresolvedAliasIds
+      };
+    }
     return {
       id: variable.id,
       name: variable.name,
@@ -1528,12 +1546,126 @@
       variableCollectionId: variable.variableCollectionId,
       scopes: Array.isArray(variable.scopes) ? variable.scopes.slice() : [],
       codeSyntax: copyCodeSyntax(variable.codeSyntax),
-      valuesByMode: resolvedValues,
-      hexByMode: buildHexMap(resolvedValues),
+      valuesByMode: originalValues,
+      hexByMode: buildUniqueHexMap(actualHexByMode),
+      actualValuesByMode,
+      actualHexByMode,
+      resolutionByMode,
       collectionName: collectionName || "\u0411\u0435\u0437 \u043A\u043E\u043B\u043B\u0435\u043A\u0446\u0438\u0438",
       groupName: nameParts.groupName,
       tokenName: nameParts.tokenName
     };
+  }
+  function createVariableValueResolver(localVariables) {
+    const variablePromises = /* @__PURE__ */ new Map();
+    const loadVariable = (aliasId) => {
+      const existing = localVariables.get(aliasId);
+      if (existing) return Promise.resolve(existing);
+      const cached = variablePromises.get(aliasId);
+      if (cached) return cached;
+      const promise = (async () => {
+        const byId = await figma.variables.getVariableByIdAsync(aliasId);
+        if (byId) return byId;
+        const key = extractAliasKey(aliasId);
+        if (!key) return null;
+        try {
+          return await figma.variables.importVariableByKeyAsync(key);
+        } catch (_error) {
+          return null;
+        }
+      })();
+      variablePromises.set(aliasId, promise);
+      return promise;
+    };
+    const resolve = async (value, preferredModeId, visitedAliasIds = /* @__PURE__ */ new Set()) => {
+      if (!isVariableAlias(value)) {
+        return {
+          status: value === void 0 ? "unresolved" : "resolved",
+          values: value === void 0 ? [] : [value],
+          aliasIds: [],
+          unresolvedAliasIds: []
+        };
+      }
+      if (visitedAliasIds.has(value.id)) {
+        return unresolvedResolution(value.id);
+      }
+      const nextVisited = new Set(visitedAliasIds);
+      nextVisited.add(value.id);
+      const target = await loadVariable(value.id);
+      if (!target) {
+        return unresolvedResolution(value.id);
+      }
+      const targetValues = copyValuesByMode(target.valuesByMode);
+      const targetModeIds = Object.prototype.hasOwnProperty.call(
+        targetValues,
+        preferredModeId
+      ) ? [preferredModeId] : Object.keys(targetValues);
+      if (!targetModeIds.length) {
+        return unresolvedResolution(value.id);
+      }
+      const nested = await Promise.all(
+        targetModeIds.map(
+          (modeId) => resolve(targetValues[modeId], modeId, nextVisited)
+        )
+      );
+      return mergeResolutions(value.id, nested);
+    };
+    return resolve;
+  }
+  async function resolveValuesByMode(values, resolver) {
+    const entries = await Promise.all(
+      Object.keys(values).map(async (modeId) => [
+        modeId,
+        await resolver(values[modeId], modeId)
+      ])
+    );
+    const result = {};
+    for (const [modeId, resolution] of entries) {
+      result[modeId] = resolution;
+    }
+    return result;
+  }
+  function mergeResolutions(aliasId, nested) {
+    const values = uniqueConcreteValues(
+      nested.flatMap((resolution) => resolution.values)
+    );
+    const unresolvedAliasIds = uniqueStrings(
+      nested.flatMap((resolution) => resolution.unresolvedAliasIds)
+    );
+    const hasUnresolved = nested.some(
+      (resolution) => resolution.status !== "resolved"
+    );
+    return {
+      status: values.length ? hasUnresolved ? "partial" : "resolved" : "unresolved",
+      values,
+      aliasIds: uniqueStrings([
+        aliasId,
+        ...nested.flatMap((resolution) => resolution.aliasIds)
+      ]),
+      unresolvedAliasIds
+    };
+  }
+  function unresolvedResolution(aliasId) {
+    return {
+      status: "unresolved",
+      values: [],
+      aliasIds: [aliasId],
+      unresolvedAliasIds: [aliasId]
+    };
+  }
+  function uniqueConcreteValues(values) {
+    const result = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const value of values) {
+      const key = JSON.stringify(value);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(value);
+    }
+    return result;
+  }
+  function uniqueStrings(values) {
+    return Array.from(new Set(values));
   }
   function copyCodeSyntax(codeSyntax) {
     const platforms = ["WEB", "ANDROID", "iOS"];
@@ -1559,13 +1691,11 @@
     }
     return result;
   }
-  function buildHexMap(values) {
+  function buildUniqueHexMap(values) {
     const result = {};
-    if (!values) return result;
     for (const modeId in values) {
       if (!Object.prototype.hasOwnProperty.call(values, modeId)) continue;
-      const hex = convertValueToHex(values[modeId]);
-      result[modeId] = hex;
+      result[modeId] = values[modeId].length === 1 ? values[modeId][0] : void 0;
     }
     return result;
   }
@@ -1577,7 +1707,8 @@
     const r = clampColorComponent2(color.r);
     const g = clampColorComponent2(color.g);
     const b = clampColorComponent2(color.b);
-    return "#" + toHex2(r) + toHex2(g) + toHex2(b);
+    const alpha = "a" in color ? clampColorComponent2(color.a) : 255;
+    return "#" + toHex2(r) + toHex2(g) + toHex2(b) + (alpha < 255 ? toHex2(alpha) : "");
   }
   function clampColorComponent2(value) {
     const normalized = typeof value === "number" ? value : 0;
@@ -1588,34 +1719,6 @@
     const hex = component.toString(16).toUpperCase();
     return hex.length === 1 ? "0" + hex : hex;
   }
-  function resolveAliasValues(values) {
-    const result = {};
-    if (!values) return result;
-    for (const modeId in values) {
-      if (!Object.prototype.hasOwnProperty.call(values, modeId)) continue;
-      result[modeId] = resolveAliasValue(values[modeId]);
-    }
-    return result;
-  }
-  function resolveAliasValue(value) {
-    if (!isVariableAlias(value)) {
-      return value;
-    }
-    const aliasKey = extractAliasKey(value.id);
-    if (!aliasKey || !blueTintVariableMap) {
-      return value;
-    }
-    const target = blueTintVariableMap.get(aliasKey);
-    if (!target) {
-      return value;
-    }
-    for (const resolved of Object.values(target.valuesByMode)) {
-      if (resolved !== void 0) {
-        return resolved;
-      }
-    }
-    return value;
-  }
   function isVariableAlias(value) {
     if (!value || typeof value !== "object") return false;
     return value.type === "VARIABLE_ALIAS";
@@ -1625,52 +1728,6 @@
     const withoutPrefix = aliasId.replace(/^VariableID:/, "");
     const [key] = withoutPrefix.split("/");
     return key || null;
-  }
-  async function ensureBlueTintVariablesLoaded() {
-    if (blueTintVariableMap) return;
-    if (blueTintLoadPromise) {
-      return blueTintLoadPromise;
-    }
-    blueTintLoadPromise = (async () => {
-      try {
-        const response = await requestRemoteSource(blueTintTokensUrl);
-        const payload = JSON.parse(response);
-        blueTintVariableMap = buildBlueTintVariableMap(payload);
-      } catch (error) {
-        console.warn("[Athena] failed to load BlueTint tokens", error);
-        blueTintVariableMap = /* @__PURE__ */ new Map();
-      } finally {
-        blueTintLoadPromise = null;
-      }
-    })();
-    return blueTintLoadPromise;
-  }
-  function buildBlueTintVariableMap(payload) {
-    var _a;
-    const result = /* @__PURE__ */ new Map();
-    if (!payload || !Array.isArray(payload.collections)) return result;
-    for (const collection of payload.collections) {
-      for (const variable of (_a = collection.variables) != null ? _a : []) {
-        if (variable.key) {
-          result.set(variable.key, variable);
-        }
-      }
-    }
-    return result;
-  }
-  async function requestRemoteSource(url) {
-    const requestHTTPsAsync = figma == null ? void 0 : figma.requestHTTPsAsync;
-    if (typeof requestHTTPsAsync === "function") {
-      return requestHTTPsAsync(url);
-    }
-    if (typeof fetch === "function") {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
-      }
-      return response.text();
-    }
-    throw new Error("\u041D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E\u0433\u043E API \u0434\u043B\u044F \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438 \u0434\u0430\u043D\u043D\u044B\u0445 (fetch/requestHTTPsAsync)");
   }
 
   // src/styleExport.ts

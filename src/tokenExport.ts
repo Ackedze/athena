@@ -9,6 +9,19 @@ type SerializedVariableValue =
   | RGBA
   | VariableAlias;
 
+type SerializedConcreteVariableValue = Exclude<
+  SerializedVariableValue,
+  VariableAlias
+>;
+
+type TokenModeResolutionStatus = 'resolved' | 'partial' | 'unresolved';
+
+export interface TokenModeResolutionExport {
+  status: TokenModeResolutionStatus;
+  aliasIds: string[];
+  unresolvedAliasIds: string[];
+}
+
 export interface TokenExportMeta {
   generatedAt: string;
   fileName: string;
@@ -28,6 +41,9 @@ export interface TokenVariableExport {
   codeSyntax: Record<CodeSyntaxPlatform, string | undefined>;
   valuesByMode: Record<string, SerializedVariableValue | undefined>;
   hexByMode: Record<string, string | undefined>;
+  actualValuesByMode: Record<string, SerializedConcreteVariableValue[]>;
+  actualHexByMode: Record<string, string[]>;
+  resolutionByMode: Record<string, TokenModeResolutionExport>;
   collectionName: string;
   groupName: string;
   tokenName: string;
@@ -49,12 +65,6 @@ export interface TokenExportPayload {
   collections: TokenCollectionExport[];
 }
 
-const blueTintTokensUrl =
-  'https://ackedze.github.io/nemesis/JSONS/BlueTint Base Colors -- BlueTint Base Colors.json';
-// Удаленная token library для resolve VARIABLE_ALIAS значений в реальные цвета.
-let blueTintVariableMap: Map<string, TokenVariableExport> | null = null;
-let blueTintLoadPromise: Promise<void> | null = null;
-
 export async function collectTokensFromFile(): Promise<TokenExportPayload> {
   // Вызов требует Variables API в текущем файле.
   if (!figma.variables) {
@@ -71,10 +81,10 @@ export async function collectTokensFromFile(): Promise<TokenExportPayload> {
     variableById.set(variable.id, variable);
   });
 
-  await ensureBlueTintVariablesLoaded();
+  const resolver = createVariableValueResolver(variableById);
 
-  const collectionExports: TokenCollectionExport[] = collections.map(
-    (collection) => {
+  const collectionExports: TokenCollectionExport[] = await Promise.all(
+    collections.map(async (collection) => {
       const collectionVariables = collection.variableIds
         .map((id) => variableById.get(id))
         .filter((variable): variable is Variable => Boolean(variable));
@@ -92,11 +102,17 @@ export async function collectTokensFromFile(): Promise<TokenExportPayload> {
           modeId: mode.modeId,
           name: mode.name,
         })),
-        variables: collectionVariables.map((variable) =>
-          serializeVariable(variable, collection.name || collection.key),
+        variables: await Promise.all(
+          collectionVariables.map((variable) =>
+            serializeVariable(
+              variable,
+              resolver,
+              collection.name || collection.key,
+            ),
+          ),
         ),
       };
-    },
+    }),
   );
 
   return {
@@ -109,14 +125,35 @@ export async function collectTokensFromFile(): Promise<TokenExportPayload> {
   };
 }
 
-function serializeVariable(
+async function serializeVariable(
   variable: Variable,
+  resolver: VariableValueResolver,
   collectionName?: string | null,
-): TokenVariableExport {
+): Promise<TokenVariableExport> {
   const rawName = variable.name || variable.key;
   const nameParts = splitVariableName(rawName);
   const originalValues = copyValuesByMode(variable.valuesByMode);
-  const resolvedValues = resolveAliasValues(originalValues);
+  const resolutions = await resolveValuesByMode(originalValues, resolver);
+  const actualValuesByMode: Record<
+    string,
+    SerializedConcreteVariableValue[]
+  > = {};
+  const actualHexByMode: Record<string, string[]> = {};
+  const resolutionByMode: Record<string, TokenModeResolutionExport> = {};
+  for (const modeId of Object.keys(resolutions)) {
+    const resolution = resolutions[modeId];
+    actualValuesByMode[modeId] = resolution.values;
+    actualHexByMode[modeId] = uniqueStrings(
+      resolution.values
+        .map((value) => convertValueToHex(value))
+        .filter((value): value is string => Boolean(value)),
+    );
+    resolutionByMode[modeId] = {
+      status: resolution.status,
+      aliasIds: resolution.aliasIds,
+      unresolvedAliasIds: resolution.unresolvedAliasIds,
+    };
+  }
   return {
     id: variable.id,
     name: variable.name,
@@ -128,12 +165,175 @@ function serializeVariable(
     variableCollectionId: variable.variableCollectionId,
     scopes: Array.isArray(variable.scopes) ? variable.scopes.slice() : [],
     codeSyntax: copyCodeSyntax(variable.codeSyntax),
-    valuesByMode: resolvedValues,
-    hexByMode: buildHexMap(resolvedValues),
+    valuesByMode: originalValues,
+    hexByMode: buildUniqueHexMap(actualHexByMode),
+    actualValuesByMode,
+    actualHexByMode,
+    resolutionByMode,
     collectionName: collectionName || 'Без коллекции',
     groupName: nameParts.groupName,
     tokenName: nameParts.tokenName,
   };
+}
+
+type VariableValueResolution = {
+  status: TokenModeResolutionStatus;
+  values: SerializedConcreteVariableValue[];
+  aliasIds: string[];
+  unresolvedAliasIds: string[];
+};
+
+type VariableValueResolver = (
+  value: SerializedVariableValue | undefined,
+  preferredModeId: string,
+  visitedAliasIds?: Set<string>,
+) => Promise<VariableValueResolution>;
+
+function createVariableValueResolver(
+  localVariables: Map<string, Variable>,
+): VariableValueResolver {
+  const variablePromises = new Map<string, Promise<Variable | null>>();
+
+  const loadVariable = (aliasId: string): Promise<Variable | null> => {
+    const existing = localVariables.get(aliasId);
+    if (existing) return Promise.resolve(existing);
+    const cached = variablePromises.get(aliasId);
+    if (cached) return cached;
+
+    const promise = (async () => {
+      const byId = await figma.variables.getVariableByIdAsync(aliasId);
+      if (byId) return byId;
+      const key = extractAliasKey(aliasId);
+      if (!key) return null;
+      try {
+        return await figma.variables.importVariableByKeyAsync(key);
+      } catch (_error) {
+        return null;
+      }
+    })();
+    variablePromises.set(aliasId, promise);
+    return promise;
+  };
+
+  const resolve: VariableValueResolver = async (
+    value,
+    preferredModeId,
+    visitedAliasIds = new Set<string>(),
+  ) => {
+    if (!isVariableAlias(value)) {
+      return {
+        status: value === undefined ? 'unresolved' : 'resolved',
+        values:
+          value === undefined
+            ? []
+            : [value as SerializedConcreteVariableValue],
+        aliasIds: [],
+        unresolvedAliasIds: [],
+      };
+    }
+
+    if (visitedAliasIds.has(value.id)) {
+      return unresolvedResolution(value.id);
+    }
+    const nextVisited = new Set(visitedAliasIds);
+    nextVisited.add(value.id);
+    const target = await loadVariable(value.id);
+    if (!target) {
+      return unresolvedResolution(value.id);
+    }
+
+    const targetValues = copyValuesByMode(target.valuesByMode);
+    const targetModeIds = Object.prototype.hasOwnProperty.call(
+      targetValues,
+      preferredModeId,
+    )
+      ? [preferredModeId]
+      : Object.keys(targetValues);
+    if (!targetModeIds.length) {
+      return unresolvedResolution(value.id);
+    }
+
+    const nested = await Promise.all(
+      targetModeIds.map((modeId) =>
+        resolve(targetValues[modeId], modeId, nextVisited),
+      ),
+    );
+    return mergeResolutions(value.id, nested);
+  };
+
+  return resolve;
+}
+
+async function resolveValuesByMode(
+  values: Record<string, SerializedVariableValue | undefined>,
+  resolver: VariableValueResolver,
+): Promise<Record<string, VariableValueResolution>> {
+  const entries = await Promise.all(
+    Object.keys(values).map(async (modeId) => [
+      modeId,
+      await resolver(values[modeId], modeId),
+    ] as const),
+  );
+  const result: Record<string, VariableValueResolution> = {};
+  for (const [modeId, resolution] of entries) {
+    result[modeId] = resolution;
+  }
+  return result;
+}
+
+function mergeResolutions(
+  aliasId: string,
+  nested: VariableValueResolution[],
+): VariableValueResolution {
+  const values = uniqueConcreteValues(
+    nested.flatMap((resolution) => resolution.values),
+  );
+  const unresolvedAliasIds = uniqueStrings(
+    nested.flatMap((resolution) => resolution.unresolvedAliasIds),
+  );
+  const hasUnresolved = nested.some(
+    (resolution) => resolution.status !== 'resolved',
+  );
+  return {
+    status: values.length
+      ? hasUnresolved
+        ? 'partial'
+        : 'resolved'
+      : 'unresolved',
+    values,
+    aliasIds: uniqueStrings([
+      aliasId,
+      ...nested.flatMap((resolution) => resolution.aliasIds),
+    ]),
+    unresolvedAliasIds,
+  };
+}
+
+function unresolvedResolution(aliasId: string): VariableValueResolution {
+  return {
+    status: 'unresolved',
+    values: [],
+    aliasIds: [aliasId],
+    unresolvedAliasIds: [aliasId],
+  };
+}
+
+function uniqueConcreteValues(
+  values: SerializedConcreteVariableValue[],
+): SerializedConcreteVariableValue[] {
+  const result: SerializedConcreteVariableValue[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
 }
 
 function copyCodeSyntax(
@@ -166,15 +366,13 @@ function copyValuesByMode(
   return result;
 }
 
-function buildHexMap(
-  values: Record<string, SerializedVariableValue> | undefined,
+function buildUniqueHexMap(
+  values: Record<string, string[]>,
 ): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
-  if (!values) return result;
   for (const modeId in values) {
     if (!Object.prototype.hasOwnProperty.call(values, modeId)) continue;
-    const hex = convertValueToHex(values[modeId]);
-    result[modeId] = hex;
+    result[modeId] = values[modeId].length === 1 ? values[modeId][0] : undefined;
   }
   return result;
 }
@@ -192,7 +390,14 @@ function convertValueToHex(
   const r = clampColorComponent(color.r);
   const g = clampColorComponent(color.g);
   const b = clampColorComponent(color.b);
-  return '#' + toHex(r) + toHex(g) + toHex(b);
+  const alpha = 'a' in color ? clampColorComponent(color.a) : 255;
+  return (
+    '#' +
+    toHex(r) +
+    toHex(g) +
+    toHex(b) +
+    (alpha < 255 ? toHex(alpha) : '')
+  );
 }
 
 function clampColorComponent(value: number | undefined): number {
@@ -204,40 +409,6 @@ function clampColorComponent(value: number | undefined): number {
 function toHex(component: number): string {
   const hex = component.toString(16).toUpperCase();
   return hex.length === 1 ? '0' + hex : hex;
-}
-
-function resolveAliasValues(
-  values: Record<string, SerializedVariableValue | undefined>,
-): Record<string, SerializedVariableValue | undefined> {
-  const result: Record<string, SerializedVariableValue | undefined> = {};
-  if (!values) return result;
-  for (const modeId in values) {
-    if (!Object.prototype.hasOwnProperty.call(values, modeId)) continue;
-    result[modeId] = resolveAliasValue(values[modeId]);
-  }
-  return result;
-}
-
-function resolveAliasValue(
-  value: SerializedVariableValue | undefined,
-): SerializedVariableValue | undefined {
-  if (!isVariableAlias(value)) {
-    return value;
-  }
-  const aliasKey = extractAliasKey(value.id);
-  if (!aliasKey || !blueTintVariableMap) {
-    return value;
-  }
-  const target = blueTintVariableMap.get(aliasKey);
-  if (!target) {
-    return value;
-  }
-  for (const resolved of Object.values(target.valuesByMode)) {
-    if (resolved !== undefined) {
-      return resolved;
-    }
-  }
-  return value;
 }
 
 function isVariableAlias(
@@ -252,55 +423,4 @@ function extractAliasKey(aliasId?: string): string | null {
   const withoutPrefix = aliasId.replace(/^VariableID:/, '');
   const [key] = withoutPrefix.split('/');
   return key || null;
-}
-
-async function ensureBlueTintVariablesLoaded(): Promise<void> {
-  // Подтягиваем удаленную token library один раз для alias resolution.
-  if (blueTintVariableMap) return;
-  if (blueTintLoadPromise) {
-    return blueTintLoadPromise;
-  }
-  blueTintLoadPromise = (async () => {
-    try {
-      const response = await requestRemoteSource(blueTintTokensUrl);
-      const payload = JSON.parse(response) as TokenExportPayload;
-      blueTintVariableMap = buildBlueTintVariableMap(payload);
-    } catch (error) {
-      console.warn('[Athena] failed to load BlueTint tokens', error);
-      blueTintVariableMap = new Map();
-    } finally {
-      blueTintLoadPromise = null;
-    }
-  })();
-  return blueTintLoadPromise;
-}
-
-function buildBlueTintVariableMap(
-  payload: TokenExportPayload,
-): Map<string, TokenVariableExport> {
-  const result = new Map<string, TokenVariableExport>();
-  if (!payload || !Array.isArray(payload.collections)) return result;
-  for (const collection of payload.collections) {
-    for (const variable of collection.variables ?? []) {
-      if (variable.key) {
-        result.set(variable.key, variable);
-      }
-    }
-  }
-  return result;
-}
-
-async function requestRemoteSource(url: string): Promise<string> {
-  const requestHTTPsAsync = (figma as any)?.requestHTTPsAsync;
-  if (typeof requestHTTPsAsync === 'function') {
-    return requestHTTPsAsync(url);
-  }
-  if (typeof fetch === 'function') {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-    return response.text();
-  }
-  throw new Error('Нет доступного API для загрузки данных (fetch/requestHTTPsAsync)');
 }
