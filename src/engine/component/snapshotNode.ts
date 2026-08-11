@@ -113,7 +113,7 @@ async function snapshotNodeAsync(
     snap.strokeToken = strokeToken;
   }
 
-  const inst = extractInstance(node);
+  const inst = await extractInstance(node);
   if (inst) snap.componentInstance = inst;
 
   const text = extractText(node);

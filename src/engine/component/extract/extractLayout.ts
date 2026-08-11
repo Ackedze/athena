@@ -1,8 +1,16 @@
 import { DSNodeLayout } from "../../types";
 
 export function extractLayout(node: SceneNode): DSNodeLayout | undefined {
-  // Снимаем только auto-layout settings и bound variable tokens.
   const layout: DSNodeLayout = {};
+
+  captureFiniteDimension(layout, "width", node.width);
+  captureFiniteDimension(layout, "height", node.height);
+  if ("minWidth" in node) {
+    captureFiniteDimension(layout, "minWidth", node.minWidth);
+    captureFiniteDimension(layout, "maxWidth", node.maxWidth);
+    captureFiniteDimension(layout, "minHeight", node.minHeight);
+    captureFiniteDimension(layout, "maxHeight", node.maxHeight);
+  }
 
   if ("layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE") {
     const padding = {
@@ -37,6 +45,22 @@ export function extractLayout(node: SceneNode): DSNodeLayout | undefined {
   }
 
   return Object.keys(layout).length ? layout : undefined;
+}
+
+function captureFiniteDimension(
+  layout: DSNodeLayout,
+  property:
+    | "width"
+    | "height"
+    | "minWidth"
+    | "maxWidth"
+    | "minHeight"
+    | "maxHeight",
+  value: number | null,
+) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    layout[property] = value;
+  }
 }
 
 function getBoundVariableId(boundVariables: any, key: string): string | null {

@@ -1,6 +1,8 @@
 import { DSInstanceInfo } from "../../types";
 
-export function extractInstance(node: SceneNode): DSInstanceInfo | undefined {
+export async function extractInstance(
+  node: SceneNode,
+): Promise<DSInstanceInfo | undefined> {
   if (node.type !== "INSTANCE") return undefined;
 
   const inst = node as InstanceNode;
@@ -12,9 +14,19 @@ export function extractInstance(node: SceneNode): DSInstanceInfo | undefined {
       info.componentKey = main.key;
     }
   } catch (error) {
-    // dynamic-page mode forbids sync access to mainComponent.
-    // Keep variantProperties and skip component linkage instead of failing export.
     void error;
+  }
+
+  if (!info.componentKey) {
+    try {
+      const main = await inst.getMainComponentAsync();
+      if (main) {
+        info.componentKey = main.key;
+      }
+    } catch (error) {
+      // Keep variantProperties when a broken instance cannot resolve its source.
+      void error;
+    }
   }
 
   const vp = (inst as any).variantProperties;

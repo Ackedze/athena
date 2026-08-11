@@ -69,6 +69,14 @@
   // src/engine/component/extract/extractLayout.ts
   function extractLayout(node) {
     const layout = {};
+    captureFiniteDimension(layout, "width", node.width);
+    captureFiniteDimension(layout, "height", node.height);
+    if ("minWidth" in node) {
+      captureFiniteDimension(layout, "minWidth", node.minWidth);
+      captureFiniteDimension(layout, "maxWidth", node.maxWidth);
+      captureFiniteDimension(layout, "minHeight", node.minHeight);
+      captureFiniteDimension(layout, "maxHeight", node.maxHeight);
+    }
     if ("layoutMode" in node && node.layoutMode && node.layoutMode !== "NONE") {
       const padding = {
         top: node.paddingTop || 0,
@@ -96,6 +104,11 @@
       }
     }
     return Object.keys(layout).length ? layout : void 0;
+  }
+  function captureFiniteDimension(layout, property, value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      layout[property] = value;
+    }
   }
   function getBoundVariableId(boundVariables, key) {
     if (!boundVariables) return null;
@@ -164,7 +177,7 @@
   }
 
   // src/engine/component/extract/extractInstance.ts
-  function extractInstance(node) {
+  async function extractInstance(node) {
     if (node.type !== "INSTANCE") return void 0;
     const inst = node;
     const info = {};
@@ -174,6 +187,15 @@
         info.componentKey = main.key;
       }
     } catch (error) {
+    }
+    if (!info.componentKey) {
+      try {
+        const main = await inst.getMainComponentAsync();
+        if (main) {
+          info.componentKey = main.key;
+        }
+      } catch (error) {
+      }
     }
     const vp = inst.variantProperties;
     if (vp && typeof vp === "object") {
@@ -288,7 +310,7 @@
     if (strokeToken) {
       snap.strokeToken = strokeToken;
     }
-    const inst = extractInstance(node);
+    const inst = await extractInstance(node);
     if (inst) snap.componentInstance = inst;
     const text = extractText(node);
     if (text) snap.text = text;

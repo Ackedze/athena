@@ -23,6 +23,12 @@ export interface DSPadding {
 }
 
 export interface DSNodeLayout {
+  width?: number | null;
+  height?: number | null;
+  minWidth?: number | null;
+  maxWidth?: number | null;
+  minHeight?: number | null;
+  maxHeight?: number | null;
   padding?: DSPadding | null;
   itemSpacing?: number | null;
   paddingTokens?: {
