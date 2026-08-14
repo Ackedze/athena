@@ -119,9 +119,13 @@ npm install
 npm run build
 # или
 npm run watch
+# сборка + regression-проверки
+npm run validate
 ```
 
 Сборка пишет артефакты в `dist/`, на которые ссылается `manifest.json`.
+Regression-проверка закрепляет сохранение явного `radius: 0` в
+`variantStructures` и в финальном sanitized export payload.
 
 ## Правило публикации
 

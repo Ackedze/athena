@@ -104,7 +104,7 @@ function normalizePageName(name: string): string {
   return name.replace(/^[^A-Za-z0-9А-Яа-яЁё]+/, '').trim();
 }
 
-function buildVariantOverrides(
+export function buildVariantOverrides(
   base: DSStructureNode[],
   variant: DSStructureNode[],
 ): DSVariantStructurePatch[] {

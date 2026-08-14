@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "scripts": {
     "build": "node build.js",
-    "watch": "node build.js --watch"
+    "watch": "node build.js --watch",
+    "test": "node scripts/test-variant-radius.js",
+    "validate": "npm run build && npm test"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.82.0",
