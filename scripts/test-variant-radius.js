@@ -98,4 +98,25 @@ assert.equal(
   'Export sanitization must not remove a zero radius from a variant patch.',
 );
 
+const repeatedBase = [
+  { id: 1, parentId: null, path: 'Size=56', type: 'COMPONENT', name: 'Size=56', visible: true },
+  { id: 2, parentId: 1, path: 'Size=56 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '56', View: 'Primary' } } },
+  { id: 3, parentId: 1, path: 'Size=56 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '56', View: 'Secondary' } } },
+  { id: 4, parentId: 1, path: 'Size=56 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '56', View: 'Secondary' } } },
+];
+const repeatedVariant = [
+  { id: 1, parentId: null, path: 'Size=32', type: 'COMPONENT', name: 'Size=32', visible: true },
+  { id: 2, parentId: 1, path: 'Size=32 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '32', View: 'Primary' } } },
+  { id: 3, parentId: 1, path: 'Size=32 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '32', View: 'Secondary' } } },
+  { id: 4, parentId: 1, path: 'Size=32 / [D] Button', type: 'INSTANCE', name: '[D] Button', visible: true, componentInstance: { variantProperties: { Size: '32', View: 'Secondary' } } },
+];
+const repeatedPatches = buildVariantOverrides(repeatedBase, repeatedVariant);
+assert.deepEqual(
+  repeatedPatches
+    .filter((patch) => patch.op === 'update' && patch.value.componentInstance)
+    .map((patch) => patch.id),
+  [2, 3, 4],
+  'Athena must diff every repeated sibling occurrence instead of only the last matching path.',
+);
+
 console.log('Athena variant radius regression checks passed');

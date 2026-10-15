@@ -131,6 +131,7 @@ export interface DSStructureNode {
 export type DSStructureNodePatch = Partial<
   Pick<
     DSStructureNode,
+    | 'parentId'
     | 'path'
     | 'type'
     | 'name'

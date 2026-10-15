@@ -15,6 +15,29 @@ Figma-плагин для сбора и публикации JSON-артефак
 - Для web-corp каталогов создавать отсутствующий базовый `rules.json` и синхронизировать его запись в `apollo-rules-registry.json`, не перезаписывая существующие ручные правила.
 - Отдавать runner-friendly publish context через DOM marker для automation-runner.
 
+## Целостность variant patches — P0, 2026-09-26
+
+Исправлен общий с CLI дефект независимых DFS ID вариантов: добавленные узлы
+получают ID выше всех base ID, parentId переводятся в тот же namespace,
+а совпавшие узлы сохраняют base ID. Повторяющиеся sibling names учитываются
+по occurrence; это не persistent semantic identity. Входные дубли ID, циклы,
+отсутствующие родители и несколько корней отклоняются до построения patches.
+`exportSanitizer` сохраняет parentId в update; `dist` пересобран.
+
+`npm run validate` проверяет radius/repeated siblings и 56 parity/topology сценариев
+с Athena CLI, включая sanitized JSON. Parity test использует соседний checkout
+`projects/Athena CLI`; production bundle от него не зависит.
+Свежий REST Spinner после исправления CLI дал 12/12 корректных структур для
+экспериментального Spinner r2. Live-приёмка плагина/Editor остаётся необходимой.
+Старые выгрузки не исправляются автоматически, нужен повторный экспорт.
+Публикация production-каталогов этим изменением не выполнялась.
+
+Ограничение проверки: отдельный `../node_modules/.bin/tsc --noEmit` пока выдаёт
+32 прежние ошибки Figma typings/extractors/sanitizer/styles. Сравнение с HEAD
+для затронутых TS-файлов в памяти подтвердило 0 новых diagnostics (различалось
+лишь количество скрытых членов union в сообщении). `npm run validate` — это
+esbuild + regression tests, а не полный typecheck. Очистка typecheck — отдельный долг.
+
 ## Ключевые файлы
 
 - `src/code.ts`: основной контроллер плагина, маршрутизация UI-сообщений, экспорт токенов/стилей и публикация в GitHub.

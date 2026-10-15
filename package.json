@@ -4,7 +4,7 @@
   "scripts": {
     "build": "node build.js",
     "watch": "node build.js --watch",
-    "test": "node scripts/test-variant-radius.js",
+    "test": "node scripts/test-variant-radius.js && node scripts/test-variant-structure.js",
     "validate": "npm run build && npm test"
   },
   "devDependencies": {

@@ -49,6 +49,7 @@ function trimVariantPatch(patch: DSVariantStructurePatch): DSVariantStructurePat
 
 function trimPatchValue(value: DSStructureNodePatch): DSStructureNodePatch {
   const trimmed: DSStructureNodePatch = {};
+  if ('parentId' in value) trimmed.parentId = value.parentId;
   if ('id' in value) trimmed.id = value.id;
   if ('path' in value) trimmed.path = value.path;
   if ('type' in value) trimmed.type = value.type;

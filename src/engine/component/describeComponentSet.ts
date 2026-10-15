@@ -108,6 +108,8 @@ export function buildVariantOverrides(
   base: DSStructureNode[],
   variant: DSStructureNode[],
 ): DSVariantStructurePatch[] {
+  assertStructureIds(base);
+  assertStructureIds(variant);
   if (base.length === 0) {
     return variant.map((node) => ({ op: "add", node: cloneNode(node) }));
   }
@@ -115,13 +117,29 @@ export function buildVariantOverrides(
   const overrides: DSVariantStructurePatch[] = [];
   const baseMap = new Map<string, DSStructureNode>();
   const seen = new Set<string>();
+  const baseKeys = buildCanonicalOccurrenceKeys(base);
+  const variantKeys = buildCanonicalOccurrenceKeys(variant);
 
-  for (const node of base) {
-    baseMap.set(canonicalPath(node.path), node);
+  for (let index = 0; index < base.length; index += 1) {
+    baseMap.set(baseKeys[index], base[index]);
   }
 
-  for (const node of variant) {
-    const key = canonicalPath(node.path);
+  // Variant IDs are local DFS counters, not IDs in the base structure.
+  // Reserve the entire old namespace, including nodes that will be removed.
+  let nextId = base.reduce((max, node) => Math.max(max, node.id), 0) + 1;
+  const ids = new Map<number, number>();
+  for (let index = 0; index < variant.length; index += 1) {
+    const matched = baseMap.get(variantKeys[index]);
+    const id = matched ? matched.id : nextId++;
+    if (!Number.isSafeInteger(id)) throw new Error("Variant structure ID space exhausted");
+    ids.set(variant[index].id, id);
+  }
+
+  for (let index = 0; index < variant.length; index += 1) {
+    const original = variant[index];
+    const node = { ...original, id: ids.get(original.id)!,
+      parentId: original.parentId === null ? null : ids.get(original.parentId)! };
+    const key = variantKeys[index];
     const baseNode = baseMap.get(key);
     if (!baseNode) {
       overrides.push({ op: "add", node: cloneNode(node) });
@@ -143,12 +161,45 @@ export function buildVariantOverrides(
   return overrides;
 }
 
+function assertStructureIds(nodes: DSStructureNode[]): void {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  if (byId.size !== nodes.length || nodes.some(node => !Number.isSafeInteger(node.id) || node.id < 0)) {
+    throw new Error("Duplicate or invalid structure node ID");
+  }
+  if (nodes.length && nodes.filter(node => node.parentId === null).length !== 1) {
+    throw new Error("Structure must have one root");
+  }
+  for (const node of nodes) {
+    const seen = new Set<number>();
+    let current: DSStructureNode | undefined = node;
+    while (current) {
+      if (seen.has(current.id)) throw new Error("Cyclic structure parent reference");
+      seen.add(current.id);
+      if (current.parentId === null) break;
+      current = byId.get(current.parentId);
+      if (!current) throw new Error("Missing structure parent ID");
+    }
+  }
+}
+
+function buildCanonicalOccurrenceKeys(nodes: DSStructureNode[]): string[] {
+  const counts = new Map<string, number>();
+  return nodes.map((node) => {
+    const path = canonicalPath(node.path);
+    const occurrence = (counts.get(path) ?? 0) + 1;
+    counts.set(path, occurrence);
+    return JSON.stringify([path, occurrence]);
+  });
+}
+
 function diffNodes(
   baseNode: DSStructureNode,
   nextNode: DSStructureNode,
 ): DSStructureNodePatch | null {
   const patch: DSStructureNodePatch = {};
 
+  if (baseNode.parentId !== nextNode.parentId) patch.parentId = nextNode.parentId;
+  if (baseNode.path !== nextNode.path) patch.path = nextNode.path;
   if (baseNode.type !== nextNode.type) patch.type = nextNode.type;
   if (baseNode.name !== nextNode.name) patch.name = nextNode.name;
   if (baseNode.visible !== nextNode.visible) patch.visible = nextNode.visible;

@@ -663,17 +663,35 @@
     return name.replace(/^[^A-Za-z0-9А-Яа-яЁё]+/, "").trim();
   }
   function buildVariantOverrides(base, variant) {
+    assertStructureIds(base);
+    assertStructureIds(variant);
     if (base.length === 0) {
       return variant.map((node) => ({ op: "add", node: cloneNode(node) }));
     }
     const overrides = [];
     const baseMap = /* @__PURE__ */ new Map();
     const seen = /* @__PURE__ */ new Set();
-    for (const node of base) {
-      baseMap.set(canonicalPath(node.path), node);
+    const baseKeys = buildCanonicalOccurrenceKeys(base);
+    const variantKeys = buildCanonicalOccurrenceKeys(variant);
+    for (let index = 0; index < base.length; index += 1) {
+      baseMap.set(baseKeys[index], base[index]);
     }
-    for (const node of variant) {
-      const key = canonicalPath(node.path);
+    let nextId = base.reduce((max, node) => Math.max(max, node.id), 0) + 1;
+    const ids = /* @__PURE__ */ new Map();
+    for (let index = 0; index < variant.length; index += 1) {
+      const matched = baseMap.get(variantKeys[index]);
+      const id = matched ? matched.id : nextId++;
+      if (!Number.isSafeInteger(id)) throw new Error("Variant structure ID space exhausted");
+      ids.set(variant[index].id, id);
+    }
+    for (let index = 0; index < variant.length; index += 1) {
+      const original = variant[index];
+      const node = {
+        ...original,
+        id: ids.get(original.id),
+        parentId: original.parentId === null ? null : ids.get(original.parentId)
+      };
+      const key = variantKeys[index];
       const baseNode = baseMap.get(key);
       if (!baseNode) {
         overrides.push({ op: "add", node: cloneNode(node) });
@@ -692,8 +710,40 @@
     }
     return overrides;
   }
+  function assertStructureIds(nodes) {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    if (byId.size !== nodes.length || nodes.some((node) => !Number.isSafeInteger(node.id) || node.id < 0)) {
+      throw new Error("Duplicate or invalid structure node ID");
+    }
+    if (nodes.length && nodes.filter((node) => node.parentId === null).length !== 1) {
+      throw new Error("Structure must have one root");
+    }
+    for (const node of nodes) {
+      const seen = /* @__PURE__ */ new Set();
+      let current = node;
+      while (current) {
+        if (seen.has(current.id)) throw new Error("Cyclic structure parent reference");
+        seen.add(current.id);
+        if (current.parentId === null) break;
+        current = byId.get(current.parentId);
+        if (!current) throw new Error("Missing structure parent ID");
+      }
+    }
+  }
+  function buildCanonicalOccurrenceKeys(nodes) {
+    const counts = /* @__PURE__ */ new Map();
+    return nodes.map((node) => {
+      var _a;
+      const path = canonicalPath(node.path);
+      const occurrence = ((_a = counts.get(path)) != null ? _a : 0) + 1;
+      counts.set(path, occurrence);
+      return JSON.stringify([path, occurrence]);
+    });
+  }
   function diffNodes(baseNode, nextNode) {
     const patch = {};
+    if (baseNode.parentId !== nextNode.parentId) patch.parentId = nextNode.parentId;
+    if (baseNode.path !== nextNode.path) patch.path = nextNode.path;
     if (baseNode.type !== nextNode.type) patch.type = nextNode.type;
     if (baseNode.name !== nextNode.name) patch.name = nextNode.name;
     if (baseNode.visible !== nextNode.visible) patch.visible = nextNode.visible;
@@ -1206,6 +1256,7 @@
   }
   function trimPatchValue(value) {
     const trimmed = {};
+    if ("parentId" in value) trimmed.parentId = value.parentId;
     if ("id" in value) trimmed.id = value.id;
     if ("path" in value) trimmed.path = value.path;
     if ("type" in value) trimmed.type = value.type;
